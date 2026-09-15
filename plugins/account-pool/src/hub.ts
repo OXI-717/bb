@@ -20,7 +20,7 @@ import type {
   ImportedClaudeCredentials,
   ImportedCodexCredentials,
 } from "./credentials.js";
-import { gateMembership, rankByBalance } from "./balancer.js";
+import { capLimit, gateMembership, rankByBalance } from "./balancer.js";
 import {
   accountStatus,
   blockingResetAt,
@@ -342,12 +342,20 @@ export class AccountPoolHub {
     const accounts = (await this.options.accounts.list()).sort(
       (left, right) => left.priority - right.priority,
     );
+    const workWeek = {
+      restDays: settings.restDays,
+      offsetMinutes: -new Date(now).getTimezoneOffset(),
+    };
     return {
       route: this.options.route,
       enabledAccountCount: accounts.filter((account) => account.enabled).length,
       inFlight: this.inFlightCount(),
       accepting: this.accepting,
       hosts: await this.options.hubTokens.list(),
+      activeAccounts: {
+        claude: this.activeAccounts.get("claude")?.accountId ?? null,
+        codex: this.activeAccounts.get("codex")?.accountId ?? null,
+      },
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
         const { accountId: _accountId, ...quotaFields } = quota;
@@ -356,6 +364,7 @@ export class AccountPoolHub {
           lastUsedHostName: null,
           ...quotaFields,
           inFlight: this.inFlightByAccount.get(account.id) ?? 0,
+          capLimit: capLimit(account, quota, now, workWeek),
           status: accountStatus(account, quota, settings.switchThreshold, now),
         };
       }),

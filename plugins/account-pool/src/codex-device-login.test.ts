@@ -95,6 +95,7 @@ function summary(account: CodexDeviceAccount): AccountSummary {
     heldUntil: null,
     error: null,
     inFlight: 0,
+    capLimit: null,
     status: "ready",
   };
 }

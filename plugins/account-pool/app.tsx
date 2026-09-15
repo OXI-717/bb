@@ -75,13 +75,17 @@ import {
   statusSchema,
 } from "./src/contracts.js";
 import { blockingResetAt } from "./src/quota.js";
+import { DEFAULT_RESERVE_CAP } from "./src/balancer.js";
 import {
   ACCOUNT_POOL_ACCOUNTS_CHANGED,
   ACCOUNT_POOL_CONFIG_CHANGED,
 } from "./src/realtime.js";
 
 type DialogState =
-  | { kind: "account" | "priority" | "remove"; accountId: string }
+  | {
+      kind: "account" | "priority" | "role" | "cap" | "remove";
+      accountId: string;
+    }
   | { kind: "claude-login" | "codex-login" | "api-key" }
   | null;
 
@@ -380,9 +384,27 @@ const restrictAccountDragToVerticalAxis: Modifier = ({ transform }) => ({
 });
 const accountDragModifiers: Modifier[] = [restrictAccountDragToVerticalAxis];
 
+type AccountAction =
+  | "toggle"
+  | "priority"
+  | "role"
+  | "cap"
+  | "refresh"
+  | "remove";
+
+function capText(account: AccountSummary): string | null {
+  if (account.capLimit === null) return null;
+  const curve =
+    account.cap ?? (account.role === "reserve" ? DEFAULT_RESERVE_CAP : null);
+  return curve === null
+    ? `cap ${percent(account.capLimit)} now`
+    : `cap ${percent(account.capLimit)} now (${percent(curve.early)}→${percent(curve.late)})`;
+}
+
 function AccountRow({
   account,
   threshold,
+  current,
   pending,
   refreshing,
   onAction,
@@ -391,12 +413,14 @@ function AccountRow({
 }: {
   account: AccountSummary;
   threshold: number;
+  current: boolean;
   pending: boolean;
   refreshing: boolean;
-  onAction: (action: "toggle" | "priority" | "refresh" | "remove") => void;
+  onAction: (action: AccountAction) => void;
   onOpen: () => void;
   reorderDisabled: boolean;
 }) {
+  const cap = capText(account);
   const status = statusPresentation(account, threshold);
   const slots = quotaSlots(account);
   const email = secondaryEmail(account);
@@ -454,6 +478,10 @@ function AccountRow({
                 </span>
               )}
               <SettingsBadge>{tier(account)}</SettingsBadge>
+              {account.role === "reserve" ? (
+                <SettingsBadge>Reserve</SettingsBadge>
+              ) : null}
+              {current ? <SettingsBadge>Current</SettingsBadge> : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-subtle-foreground/75">
               <span className="inline-flex shrink-0 items-center gap-1.5">
@@ -463,6 +491,7 @@ function AccountRow({
               {account.lastUsedAt === null ? null : (
                 <span>used {relative(account.lastUsedAt)}</span>
               )}
+              {cap === null ? null : <span>{cap}</span>}
               {refreshing ? <span>refreshing usage…</span> : null}
             </div>
           </div>
@@ -502,6 +531,20 @@ function AccountRow({
             >
               <Icon name="ListView" />
               Set priority…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={pending}
+              onSelect={() => onAction("role")}
+            >
+              <Icon name="ListView" />
+              Set role…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={pending}
+              onSelect={() => onAction("cap")}
+            >
+              <Icon name="ListView" />
+              Set weekly cap…
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={pending}
@@ -887,6 +930,11 @@ function AccountPoolSettings() {
   const [pastedCode, setPastedCode] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [priority, setPriority] = useState("100");
+  const [roleDraft, setRoleDraft] = useState<AccountSummary["role"]>("primary");
+  const [capDraft, setCapDraft] = useState({ early: "", late: "" });
+  const [drainDraft, setDrainDraft] = useState("");
+  const [restDraft, setRestDraft] = useState("");
+  const [routingError, setRoutingError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
   const mounted = useRef(true);
   const threshold =
@@ -894,6 +942,8 @@ function AccountPoolSettings() {
   const applyConfig = useCallback((next: AccountPoolConfig) => {
     setConfig(next);
     setDrafts(configDrafts(next));
+    setDrainDraft(String(next.reserveDrainHours));
+    setRestDraft(next.restDays.join(","));
   }, []);
   const refresh = useCallback(async () => {
     try {
@@ -970,6 +1020,8 @@ function AccountPoolSettings() {
   const selectedAccount =
     dialog?.kind === "account" ||
     dialog?.kind === "priority" ||
+    dialog?.kind === "role" ||
+    dialog?.kind === "cap" ||
     dialog?.kind === "remove"
       ? (accounts.find((account) => account.id === dialog.accountId) ?? null)
       : null;
@@ -1077,13 +1129,66 @@ function AccountPoolSettings() {
       });
     });
   }
+  async function saveRouting(update: AccountPoolConfigSetInput): Promise<void> {
+    if (config === null || pending !== null) return;
+    setPending("config-routing");
+    setRoutingError(null);
+    try {
+      applyConfig(await rpc.call("config.set", update));
+    } catch (saveError) {
+      setRoutingError(errorText(saveError));
+    } finally {
+      setPending(null);
+    }
+  }
+  async function saveDrainHours(): Promise<void> {
+    if (config === null) return;
+    const raw = drainDraft.trim();
+    const value = Number(raw);
+    if (raw === "" || !Number.isFinite(value) || value <= 0 || value > 168) {
+      setRoutingError("Drain hours must be greater than 0 and at most 168.");
+      return;
+    }
+    if (value === config.reserveDrainHours) return;
+    await saveRouting({ reserveDrainHours: value });
+  }
+  async function saveRestDays(): Promise<void> {
+    if (config === null) return;
+    const raw = restDraft.trim();
+    const days =
+      raw === "" || raw === "none"
+        ? []
+        : raw.split(",").map((day) => (day.trim() === "" ? NaN : Number(day)));
+    if (
+      days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) ||
+      new Set(days).size !== days.length
+    ) {
+      setRoutingError(
+        "Rest days must be unique weekday numbers from 0 (Sunday) to 6.",
+      );
+      return;
+    }
+    if (days.join(",") === config.restDays.join(",")) return;
+    await saveRouting({ restDays: days });
+  }
   async function accountAction(
     account: AccountSummary,
-    action: "toggle" | "priority" | "refresh" | "remove",
+    action: AccountAction,
   ): Promise<void> {
     if (action === "priority") {
       setPriority(String(account.priority));
       setDialog({ kind: "priority", accountId: account.id });
+      return;
+    }
+    if (action === "role") {
+      setRoleDraft(account.role);
+      setDialog({ kind: "role", accountId: account.id });
+      return;
+    }
+    if (action === "cap") {
+      const curve = account.cap ?? DEFAULT_RESERVE_CAP;
+      setCapDraft({ early: String(curve.early), late: String(curve.late) });
+      setDialog({ kind: "cap", accountId: account.id });
       return;
     }
     if (action === "remove") {
@@ -1134,6 +1239,12 @@ function AccountPoolSettings() {
     "no machines";
   const parent = status?.parent ?? null;
   const proxying = parent !== null && parent.mode === "proxy";
+  const currentLabel = (provider: PoolProvider): string => {
+    const id = status?.activeAccounts[provider] ?? null;
+    return accounts.find((account) => account.id === id)?.label ?? "none";
+  };
+  const currentId = (provider: PoolProvider): string | null =>
+    status?.activeAccounts[provider] ?? null;
   return (
     <div className="w-full space-y-6">
       {parent === null ? null : (
@@ -1172,6 +1283,13 @@ function AccountPoolSettings() {
           Hub {status?.accepting ? "accepting" : "not accepting"} ·{" "}
           {status?.inFlight ?? 0} in flight · used by {hubHosts}
           {statusIsCached ? " · refreshing…" : null}
+        </p>
+        <p className="flex flex-wrap gap-x-3 text-xs text-subtle-foreground/75">
+          {PROVIDERS.map((provider) => (
+            <span key={provider.id}>
+              {`Current ${provider.title}: ${currentLabel(provider.id)}`}
+            </span>
+          ))}
         </p>
         {error === null ? null : (
           <div
@@ -1273,6 +1391,7 @@ function AccountPoolSettings() {
                           key={account.id}
                           account={account}
                           threshold={threshold}
+                          current={account.id === currentId(provider.id)}
                           pending={pending !== null}
                           refreshing={
                             statusIsCached ||
@@ -1297,6 +1416,72 @@ function AccountPoolSettings() {
             </SettingsSection>
           );
         })}
+        <div className="rounded-lg border border-border px-4">
+          <div className="py-2.5 text-sm font-medium text-foreground">
+            Routing
+          </div>
+          <div className="divide-y divide-border border-t border-border">
+            <ConfigFieldRow
+              label="Balanced routing"
+              description="New conversations go to the account with the most weekly quota left before its reset. Off keeps priority order."
+              error={null}
+            >
+              <Switch
+                checked={config?.routingStrategy === "balanced"}
+                disabled={config === null || pending !== null}
+                aria-label="Balanced routing"
+                onCheckedChange={(enabled) =>
+                  void saveRouting({
+                    routingStrategy: enabled ? "balanced" : "sequential",
+                  })
+                }
+              />
+            </ConfigFieldRow>
+            <ConfigFieldRow
+              label="Reserve drain hours"
+              description="Working hours before a weekly reset when reserve accounts join primary ones."
+              error={null}
+            >
+              <Input
+                type="number"
+                min="1"
+                max="168"
+                step="1"
+                aria-label="Reserve drain hours"
+                disabled={config === null || pending !== null}
+                value={drainDraft}
+                onChange={(event) => {
+                  setDrainDraft(event.target.value);
+                  setRoutingError(null);
+                }}
+                onBlur={() => void saveDrainHours()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </ConfigFieldRow>
+            <ConfigFieldRow
+              label="Rest days"
+              description="Weekdays that do not count toward window progress, 0 is Sunday. Empty counts every day."
+              error={routingError}
+            >
+              <Input
+                aria-label="Rest days"
+                placeholder="0,6"
+                disabled={config === null || pending !== null}
+                value={restDraft}
+                onChange={(event) => {
+                  setRestDraft(event.target.value);
+                  setRoutingError(null);
+                }}
+                onBlur={() => void saveRestDays()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            </ConfigFieldRow>
+          </div>
+        </div>
         <Collapsible className="rounded-lg border border-border px-4">
           <CollapsibleTrigger className="flex w-full items-center gap-2 py-2.5 text-sm font-medium text-foreground">
             <Icon
@@ -1468,6 +1653,141 @@ function AccountPoolSettings() {
               value={priority}
               onChange={(event) => setPriority(event.target.value)}
             />
+          </DialogFrame>
+        ) : null}
+        {dialog?.kind === "role" && selectedAccount !== null ? (
+          <DialogFrame
+            title="Set role"
+            footer={
+              <>
+                <span className="flex-1" />
+                <Button variant="outline" onClick={closeDialog}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={pending !== null}
+                  onClick={() =>
+                    void run(`role-${selectedAccount.id}`, async () => {
+                      await rpc.call("account.setRole", {
+                        accountId: selectedAccount.id,
+                        role: roleDraft,
+                      });
+                      setDialog(null);
+                    })
+                  }
+                >
+                  Save
+                </Button>
+              </>
+            }
+          >
+            <p className="text-sm text-muted-foreground">
+              Primary accounts take traffic normally. Reserve accounts are used
+              only when no primary account is eligible or close to their weekly
+              reset, and always stay under their weekly cap.
+            </p>
+            <div className="flex gap-2">
+              {(["primary", "reserve"] as const).map((role) => (
+                <Button
+                  key={role}
+                  variant={roleDraft === role ? undefined : "outline"}
+                  aria-pressed={roleDraft === role}
+                  onClick={() => setRoleDraft(role)}
+                >
+                  {role === "primary" ? "Primary" : "Reserve"}
+                </Button>
+              ))}
+            </div>
+          </DialogFrame>
+        ) : null}
+        {dialog?.kind === "cap" && selectedAccount !== null ? (
+          <DialogFrame
+            title="Set weekly cap"
+            footer={
+              <>
+                <Button
+                  variant="outline"
+                  disabled={pending !== null || selectedAccount.cap === null}
+                  onClick={() =>
+                    void run(`cap-${selectedAccount.id}`, async () => {
+                      await rpc.call("account.setCap", {
+                        accountId: selectedAccount.id,
+                        cap: null,
+                      });
+                      setDialog(null);
+                    })
+                  }
+                >
+                  Remove cap
+                </Button>
+                <span className="flex-1" />
+                <Button variant="outline" onClick={closeDialog}>
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    pending !== null ||
+                    capDraft.early.trim() === "" ||
+                    capDraft.late.trim() === "" ||
+                    !Number.isFinite(Number(capDraft.early)) ||
+                    !Number.isFinite(Number(capDraft.late))
+                  }
+                  onClick={() =>
+                    void run(`cap-${selectedAccount.id}`, async () => {
+                      await rpc.call("account.setCap", {
+                        accountId: selectedAccount.id,
+                        cap: {
+                          early: Number(capDraft.early),
+                          late: Number(capDraft.late),
+                        },
+                      });
+                      setDialog(null);
+                    })
+                  }
+                >
+                  Save
+                </Button>
+              </>
+            }
+          >
+            <p className="text-sm text-muted-foreground">
+              The pool leaves this account alone once its weekly usage reaches a
+              limit that rises from the week-start value to the reset value over
+              working time. Use fractions from 0 to 1.
+              {selectedAccount.cap === null && selectedAccount.role === "reserve"
+                ? " Reserve accounts use 0.15 to 0.98 until you set a cap."
+                : ""}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                aria-label="Cap at week start"
+                value={capDraft.early}
+                onChange={(event) =>
+                  setCapDraft((current) => ({
+                    ...current,
+                    early: event.target.value,
+                  }))
+                }
+              />
+              <Input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                aria-label="Cap at reset"
+                value={capDraft.late}
+                onChange={(event) =>
+                  setCapDraft((current) => ({
+                    ...current,
+                    late: event.target.value,
+                  }))
+                }
+              />
+            </div>
           </DialogFrame>
         ) : null}
         {dialog?.kind === "api-key" ? (

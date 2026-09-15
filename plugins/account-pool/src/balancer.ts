@@ -195,6 +195,22 @@ function effectiveCap(account: PoolMembership): ProgressiveCap | null {
   );
 }
 
+export function capLimit(
+  account: PoolMembership,
+  quota: AccountQuota,
+  now: number,
+  week: WorkWeek = CALENDAR_WEEK,
+): number | null {
+  const cap = effectiveCap(account);
+  if (cap === null) return null;
+  return allowedUtilization(
+    cap,
+    weeklyWindow(quotaWindows(quota, now)),
+    now,
+    week,
+  );
+}
+
 export function gateMembership<
   T extends { account: PoolMembership; quota: AccountQuota },
 >(
