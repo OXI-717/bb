@@ -66,7 +66,9 @@ export interface AccountPoolPluginOptions {
 
 const DISPOSE_INSPECTION_TIMEOUT_MS = 2_000;
 const DISPOSE_INSPECTION_TIMEOUT = Symbol("dispose-inspection-timeout");
-const HUB_BASE_PATH = "/api/v1/plugins/account-pool/http";
+function hubBasePath(pluginId: string): string {
+  return `/api/v1/plugins/${pluginId}/http`;
+}
 
 const PROVIDER_ROUTING_ENV: Record<PoolProvider, readonly string[]> = {
   claude: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"],
@@ -131,6 +133,7 @@ export function createAccountPoolPlugin(
       options.fetch === undefined ? createUpstreamTransport() : null;
     const upstreamFetch = options.fetch ?? transport?.fetch;
     const hub = createHub({
+      route: hubBasePath(bb.pluginId),
       accounts,
       quotas,
       affinity: new PoolAffinityStore(db),
@@ -233,7 +236,7 @@ export function createAccountPoolPlugin(
     const markerEntries = (token: string): PoolEnvEntry[] => [
       {
         name: PARENT_URL_ENV,
-        value: { serverPath: HUB_BASE_PATH },
+        value: { serverPath: hubBasePath(bb.pluginId) },
         reason: "Account Pooler hub for nested bb servers on this machine",
       },
       {
@@ -277,7 +280,7 @@ export function createAccountPoolPlugin(
       contributeFor("claude", (token) => [
         {
           name: "ANTHROPIC_BASE_URL",
-          value: { serverPath: HUB_BASE_PATH },
+          value: { serverPath: hubBasePath(bb.pluginId) },
           reason: "Routed through the Account Pooler hub",
         },
         {
@@ -301,7 +304,7 @@ export function createAccountPoolPlugin(
       contributeFor("codex", (token) => [
         {
           name: "CODEX_OPENAI_BASE_URL",
-          value: { serverPath: `${HUB_BASE_PATH}/v1` },
+          value: { serverPath: `${hubBasePath(bb.pluginId)}/v1` },
           reason: "Routed through the Account Pooler hub",
         },
         {

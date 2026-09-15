@@ -5657,6 +5657,48 @@ describe("sequential pool recovery", () => {
         ?.status,
     ).toBe("exhausted");
   });
+  it("routes sessions to its own plugin id when installed under another name", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "bb-account-pool-id-"));
+    const host = createFakePluginHost({
+      pluginId: "account-pool-balanced",
+      dataDir,
+      sdk: sdkStubs(),
+    });
+    await createAccountPoolPlugin({ usageUrl: "data:application/json,{}" })(
+      host.bb,
+    );
+    const service = host.harness.behavior.runService("hub");
+    cleanups.push(async () => {
+      service.controller.abort();
+      await service.done;
+      await host.harness.lifecycle.dispose();
+      await fs.rm(dataDir, { recursive: true, force: true });
+    });
+    await host.harness.behavior.callRpc("account.add", {
+      provider: "claude",
+      source: { kind: "api-key", apiKey: "sk-renamed" },
+      label: null,
+      priority: 100,
+    });
+    await vi.waitFor(async () => {
+      expect(
+        statusSchema.parse(
+          await host.harness.behavior.callRpc("status.get", null),
+        ),
+      ).toMatchObject({
+        accepting: true,
+        route: "/api/v1/plugins/account-pool-balanced/http",
+      });
+    });
+    const entries = await host.harness.behavior.resolveProviderEnv(
+      "claude-code",
+      { threadId: "thread-one", projectId: "project-one", hostId: "host-one" },
+    );
+    expect(
+      entries.find((entry) => entry.name === "ANTHROPIC_BASE_URL")?.value,
+    ).toEqual({ serverPath: "/api/v1/plugins/account-pool-balanced/http" });
+  });
+
   it("keeps reserve accounts out of routing while a primary account is eligible", async () => {
     const attempts: Array<string | null> = [];
     const fixture = await createFixture({
