@@ -355,6 +355,7 @@ describe("Account Pool config schema", () => {
       parentMode: "proxy",
       routingStrategy: "sequential",
       reserveDrainHours: 24,
+      restDays: [0, 6],
     });
     expect(
       accountPoolConfigSetInputSchema.safeParse({
@@ -422,6 +423,7 @@ describe("Account Pool plugin", () => {
       parentMode: "proxy",
       routingStrategy: "sequential",
       reserveDrainHours: 24,
+      restDays: [0, 6],
     });
     expect(
       accountPoolConfigSchema.parse(await host.bb.storage.kv.get("config")),
@@ -5681,6 +5683,7 @@ describe("sequential pool recovery", () => {
       "account",
       "cap",
       personal.id,
+      "0.2",
       "0.9",
     ]);
     expect(cap.exitCode).toBe(0);
@@ -5713,11 +5716,11 @@ describe("sequential pool recovery", () => {
     ).toMatchObject({ role: "reserve", cap: null });
     expect(
       listed.find((account) => account.id === personal.id),
-    ).toMatchObject({ role: "primary", cap: 0.9 });
+    ).toMatchObject({ role: "primary", cap: { early: 0.2, late: 0.9 } });
     await expect(
       fixture.host.harness.behavior.callRpc("account.setCap", {
         accountId: personal.id,
-        cap: 1.5,
+        cap: { early: 0.9, late: 0.2 },
       }),
     ).rejects.toThrow();
   });

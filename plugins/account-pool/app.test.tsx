@@ -111,6 +111,7 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
     parentMode: "proxy",
     routingStrategy: "sequential",
     reserveDrainHours: 24,
+    restDays: [0, 6],
     ...overrides,
   };
 }

@@ -836,18 +836,26 @@ until reset, scaled down once a shorter window passes 80 percent and by the
 account's in-flight requests; ties keep priority order. Existing conversations
 stay pinned exactly as in `sequential`, the default.
 
-Each account also has a `role` and an optional weekly `cap`, independent of
-`routingStrategy`. `primary` accounts take traffic normally; `reserve` accounts
-take it only when no primary account is eligible. A cap is the weekly quota
-fraction above which the pool leaves the account alone, for example an account
-shared with other people; reserve accounts without an explicit cap stop at
-`0.5`. Within `reserveDrainHours` (default `24`) of an account's weekly reset,
-the pool treats it as primary and ignores its cap up to `switchThreshold`, so
-quota that would expire unused is spent first.
+Each account also has a `role` and an optional progressive weekly `cap`,
+independent of `routingStrategy`. `primary` accounts take traffic normally;
+`reserve` accounts take it only when no primary account is eligible or within
+`reserveDrainHours` (default `24`) of their weekly reset. A cap has `early` and
+`late` quota fractions: the pool leaves the account alone once its weekly
+utilization reaches a limit that moves linearly from `early` with a full window
+left to `late` at the reset, and holds it to `early` while the reset is unknown.
+This keeps accounts shared with other people untouched early in the week while
+still spending quota that would expire. Reserve accounts without an explicit cap
+use `0.15` to `0.98`.
+
+Window progress, the drain window, and the balanced score count working time
+only. `restDays` lists weekdays in the bb server's time zone (`0` is Sunday)
+that do not count and defaults to `0,6`, so on Friday a reset after the weekend
+already has little working time left; `none` counts every day.
 
 ```sh
 bb pool account role <id> <primary|reserve>
-bb pool account cap <id> <0..1|off>
+bb pool account cap <id> <early> <late>
+bb pool account cap <id> off
 bb pool config set routingStrategy balanced
 bb pool config set reserveDrainHours 24
 ```

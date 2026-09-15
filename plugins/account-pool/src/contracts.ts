@@ -7,6 +7,7 @@ export const DEFAULT_ACCOUNT_POOL_CONFIG = {
   parentMode: "proxy" as const,
   routingStrategy: "sequential" as const,
   reserveDrainHours: 24,
+  restDays: [0, 6],
 };
 
 const httpUrlSchema = z.string().refine((value) => {
@@ -30,16 +31,28 @@ export const routingStrategySchema = z.enum(["sequential", "balanced"]);
 
 export const accountRoleSchema = z.enum(["primary", "reserve"]);
 
-export const accountCapSchema = z
+const capFractionSchema = z
   .number()
   .min(0, "Must be at least 0.")
-  .max(1, "Must be at most 1.")
+  .max(1, "Must be at most 1.");
+
+export const accountCapSchema = z
+  .object({ early: capFractionSchema, late: capFractionSchema })
+  .strict()
+  .refine((cap) => cap.early <= cap.late, "early must not exceed late.")
   .nullable();
 
 const reserveDrainHoursSchema = z
   .number()
   .positive("Must be greater than 0.")
   .max(168, "Must be at most 168.");
+
+const restDaysSchema = z
+  .array(z.number().int().min(0).max(6))
+  .refine(
+    (days) => new Set(days).size === days.length,
+    "Weekdays must be unique.",
+  );
 
 export const accountPoolConfigSchema = z
   .object({
@@ -61,6 +74,7 @@ export const accountPoolConfigSchema = z
     reserveDrainHours: reserveDrainHoursSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.reserveDrainHours,
     ),
+    restDays: restDaysSchema.default(DEFAULT_ACCOUNT_POOL_CONFIG.restDays),
   })
   .strict();
 
@@ -74,6 +88,7 @@ export const accountPoolConfigSetInputSchema = z
     parentMode: parentModeSchema.optional(),
     routingStrategy: routingStrategySchema.optional(),
     reserveDrainHours: reserveDrainHoursSchema.optional(),
+    restDays: restDaysSchema.optional(),
   })
   .strict();
 

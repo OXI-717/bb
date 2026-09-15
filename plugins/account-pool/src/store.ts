@@ -127,7 +127,7 @@ export class AccountStore {
     return this.update(id, (account) => ({ ...account, role }));
   }
 
-  async setCap(id: string, cap: number | null): Promise<Account | null> {
+  async setCap(id: string, cap: Account["cap"]): Promise<Account | null> {
     return this.update(id, (account) => ({ ...account, cap }));
   }
 

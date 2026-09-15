@@ -50,13 +50,14 @@ const HELP = [
   "  bb pool account disable <id>",
   "  bb pool account priority <id> <n>",
   "  bb pool account role <id> <primary|reserve>",
-  "  bb pool account cap <id> <0..1|off>",
+  "  bb pool account cap <id> <early> <late>",
+  "  bb pool account cap <id> off",
   "  bb pool account reorder <claude|codex> <id>...",
   "  bb pool account refresh <id>",
   "  bb pool status [--json]",
   "  bb pool routing <claude|codex> [--off]",
   "  bb pool config",
-  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours> <value>",
+  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours|restDays> <value>",
   "  bb pool parent [proxy|isolate]",
   "  bb pool token rotate --machine <id-or-name>",
   "  bb pool bypass <thread-id> [--off]",
@@ -172,7 +173,7 @@ function formatAccounts(accounts: readonly AccountSummary[]): string {
         String(account.enabled),
         String(account.priority),
         account.role,
-        account.cap === null ? "-" : formatUtilization(account.cap),
+        formatCap(account.cap),
         formatUtilization(account.fiveHourUtilization),
         formatReset(account.fiveHourResetAt),
         formatUtilization(account.sevenDayUtilization),
@@ -222,7 +223,14 @@ function formatConfig(config: AccountPoolConfig): string {
     `parentMode: ${config.parentMode}`,
     `routingStrategy: ${config.routingStrategy}`,
     `reserveDrainHours: ${config.reserveDrainHours}`,
+    `restDays: ${config.restDays.length === 0 ? "none" : config.restDays.join(",")}`,
   ].join("\n");
+}
+
+function formatCap(cap: AccountSummary["cap"]): string {
+  return cap === null
+    ? "-"
+    : `${formatUtilization(cap.early)}->${formatUtilization(cap.late)}`;
 }
 
 function formatParent(parent: PoolStatus["parent"]): string {
@@ -268,8 +276,16 @@ function parseConfigUpdate(
       reserveDrainHours: Number(value),
     });
   }
+  if (key === "restDays") {
+    return accountPoolConfigSetInputSchema.parse({
+      restDays:
+        value === "none"
+          ? []
+          : value.split(",").map((day) => (day.trim() === "" ? NaN : Number(day))),
+    });
+  }
   throw new Error(
-    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, parentMode, routingStrategy, or reserveDrainHours.",
+    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, parentMode, routingStrategy, reserveDrainHours, or restDays.",
   );
 }
 
@@ -361,7 +377,7 @@ export function registerPoolCli(
         name: "config-set",
         summary: "Update one Account Pooler routing configuration value",
         usage:
-          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours> <value>",
+          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours|restDays> <value>",
       },
       {
         name: "parent",
@@ -416,17 +432,23 @@ export function registerPoolCli(
           };
         }
         if (argv[0] === "account" && argv[1] === "cap") {
-          if (argv.length !== 4 || argv[3]?.trim() === "")
+          const off = argv.length === 4 && argv[3] === "off";
+          if (
+            !off &&
+            (argv.length !== 5 ||
+              argv[3]?.trim() === "" ||
+              argv[4]?.trim() === "")
+          )
             throw new Error(HELP);
           const input = accountCapInputSchema.parse({
             accountId: argv[2],
-            cap: argv[3] === "off" ? null : Number(argv[3]),
+            cap: off ? null : { early: Number(argv[3]), late: Number(argv[4]) },
           });
           const account = await operations.setCap(input.accountId, input.cap);
           if (account === null) throw new Error("Account not found.");
           return {
             exitCode: 0,
-            stdout: `Set ${account.label} cap to ${account.cap ?? "off"}.\n`,
+            stdout: `Set ${account.label} cap to ${formatCap(account.cap)}.\n`,
           };
         }
         if (argv[0] === "account" && argv[1] === "reorder") {

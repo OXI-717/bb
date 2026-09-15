@@ -758,6 +758,10 @@ export class AccountPoolHub {
     const settings = this.options.getSettings();
     const threshold = settings.switchThreshold;
     const balanced = settings.routingStrategy === "balanced";
+    const workWeek = {
+      restDays: settings.restDays,
+      offsetMinutes: -new Date(now).getTimezoneOffset(),
+    };
     const available = gateMembership(
       accounts
         .filter((account) => account.provider === provider && account.enabled)
@@ -769,6 +773,7 @@ export class AccountPoolHub {
         .filter(({ quota }) => !isSharedQuotaExhausted(quota, threshold, now)),
       now,
       settings.reserveDrainHours * 60 * 60 * 1_000,
+      workWeek,
     );
     const eligible = available.filter(
       ({ quota }) => !isQuotaExhausted(quota, family, threshold, now),
@@ -819,6 +824,7 @@ export class AccountPoolHub {
           candidates,
           (accountId) => this.inFlightByAccount.get(accountId) ?? 0,
           now,
+          workWeek,
         )[0]
       : ordered
           .map((account) =>

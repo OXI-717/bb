@@ -87,7 +87,7 @@ type DialogState =
 
 type ConfigField = Exclude<
   keyof AccountPoolConfig,
-  "parentMode" | "routingStrategy" | "reserveDrainHours"
+  "parentMode" | "routingStrategy" | "reserveDrainHours" | "restDays"
 >;
 
 const PROVIDERS: Array<{

@@ -196,7 +196,7 @@ export class PoolOperations {
     return account;
   }
 
-  async setCap(id: string, cap: number | null): Promise<Account | null> {
+  async setCap(id: string, cap: Account["cap"]): Promise<Account | null> {
     const account = await this.accounts.setCap(id, cap);
     if (account !== null) this.onAccountsChanged();
     return account;

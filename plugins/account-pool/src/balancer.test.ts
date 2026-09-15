@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { balanceScore, gateMembership, rankByBalance } from "./balancer.js";
+import {
+  balanceScore,
+  gateMembership,
+  rankByBalance,
+  type WorkWeek,
+} from "./balancer.js";
 import type { AccountQuota, LimitWindow } from "./contracts.js";
 
-const NOW = 1_800_000_000_000;
+const NOW = Date.UTC(2027, 0, 15, 8);
 const HOUR = 60 * 60 * 1_000;
 const DAY = 24 * HOUR;
 const DRAIN = 24 * HOUR;
+const WEEKDAYS: WorkWeek = { restDays: [0, 6], offsetMinutes: 0 };
 
 function quota(overrides: Partial<AccountQuota> = {}): AccountQuota {
   return {
@@ -35,7 +41,7 @@ function quota(overrides: Partial<AccountQuota> = {}): AccountQuota {
 function window(
   windowMinutes: number,
   utilization: number,
-  resetAt: number,
+  resetAt: number | null,
 ): LimitWindow {
   return {
     slot: windowMinutes < 24 * 60 ? "primary" : "secondary",
@@ -48,8 +54,12 @@ function window(
   };
 }
 
-function weekly(utilization: number, resetIn: number): AccountQuota {
-  return quota({ limitWindows: [window(10_080, utilization, NOW + resetIn)] });
+function weekly(utilization: number, resetIn: number | null): AccountQuota {
+  return quota({
+    limitWindows: [
+      window(10_080, utilization, resetIn === null ? null : NOW + resetIn),
+    ],
+  });
 }
 
 function candidate(id: string, value: AccountQuota) {
@@ -60,7 +70,7 @@ function member(
   id: string,
   role: "primary" | "reserve",
   value: AccountQuota,
-  cap: number | null = null,
+  cap: { early: number; late: number } | null = null,
 ) {
   return { account: { id, role, cap }, quota: value };
 }
@@ -111,12 +121,22 @@ describe("balanceScore", () => {
 
   it("does not divide by a reset that is moments away", () => {
     expect(Number.isFinite(balanceScore(weekly(0.5, 1), 0, NOW))).toBe(true);
+    expect(
+      Number.isFinite(balanceScore(weekly(0.5, 2 * DAY), 0, NOW + DAY, WEEKDAYS)),
+    ).toBe(true);
   });
 
   it("spreads concurrent work away from busy accounts", () => {
     const value = weekly(0.3, 3 * DAY);
     expect(balanceScore(value, 0, NOW)).toBeGreaterThan(
       balanceScore(value, 4, NOW),
+    );
+  });
+
+  it("counts only working days left before a reset", () => {
+    const overWeekend = weekly(0.5, 3 * DAY);
+    expect(balanceScore(overWeekend, 0, NOW, WEEKDAYS)).toBeGreaterThan(
+      balanceScore(overWeekend, 0, NOW),
     );
   });
 });
@@ -149,7 +169,7 @@ describe("gateMembership", () => {
     expect(ids(gated)).toEqual(["personal"]);
   });
 
-  it("adds a reserve account inside its drain window, even above its cap", () => {
+  it("adds a reserve account inside its drain window while under its cap", () => {
     const gated = gateMembership(
       [
         member("personal", "primary", quota()),
@@ -161,12 +181,15 @@ describe("gateMembership", () => {
     expect(ids(gated)).toEqual(["personal", "work"]);
   });
 
-  it("falls back to reserve accounts below their cap when no primary remains", () => {
+  it("falls back to reserve accounts under their progressive cap when no primary remains", () => {
     const gated = gateMembership(
       [
         member("work-idle", "reserve", weekly(0.1, 4 * DAY)),
         member("work-busy", "reserve", weekly(0.6, 4 * DAY)),
-        member("work-tight", "reserve", weekly(0.1, 4 * DAY), 0.05),
+        member("work-tight", "reserve", weekly(0.1, 4 * DAY), {
+          early: 0.05,
+          late: 0.1,
+        }),
       ],
       NOW,
       DRAIN,
@@ -174,10 +197,11 @@ describe("gateMembership", () => {
     expect(ids(gated)).toEqual(["work-idle"]);
   });
 
-  it("caps a shared primary account outside the drain window", () => {
+  it("raises a shared account's cap from early to late as the reset approaches", () => {
+    const shared = { early: 0.15, late: 0.98 };
     const early = gateMembership(
       [
-        member("family", "primary", weekly(0.55, 3 * DAY), 0.5),
+        member("family", "primary", weekly(0.3, 6 * DAY), shared),
         member("personal", "primary", weekly(0.2, 5 * DAY)),
       ],
       NOW,
@@ -186,13 +210,28 @@ describe("gateMembership", () => {
     expect(ids(early)).toEqual(["personal"]);
     const late = gateMembership(
       [
-        member("family", "primary", weekly(0.55, 3 * HOUR), 0.5),
+        member("family", "primary", weekly(0.3, DAY), shared),
         member("personal", "primary", weekly(0.2, 5 * DAY)),
       ],
       NOW,
       DRAIN,
     );
     expect(ids(late)).toEqual(["family", "personal"]);
+  });
+
+  it("holds a capped account to its early limit when the reset is unknown", () => {
+    const gated = gateMembership(
+      [
+        member("family", "primary", weekly(0.2, null), {
+          early: 0.15,
+          late: 0.98,
+        }),
+        member("personal", "primary", quota()),
+      ],
+      NOW,
+      DRAIN,
+    );
+    expect(ids(gated)).toEqual(["personal"]);
   });
 
   it("does not open the drain window for a weekly reset that already passed", () => {
@@ -205,5 +244,32 @@ describe("gateMembership", () => {
       DRAIN,
     );
     expect(ids(gated)).toEqual(["personal"]);
+  });
+
+  it("raises the cap on Friday for a reset after the weekend", () => {
+    const entries = [
+      member("family", "primary", weekly(0.7, 3 * DAY), {
+        early: 0.15,
+        late: 0.98,
+      }),
+      member("personal", "primary", quota()),
+    ];
+    expect(ids(gateMembership(entries, NOW, DRAIN))).toEqual(["personal"]);
+    expect(ids(gateMembership(entries, NOW, DRAIN, WEEKDAYS))).toEqual([
+      "family",
+      "personal",
+    ]);
+  });
+
+  it("opens the drain window on Friday for a Monday reset", () => {
+    const entries = [
+      member("personal", "primary", quota()),
+      member("work", "reserve", weekly(0.1, 3 * DAY)),
+    ];
+    expect(ids(gateMembership(entries, NOW, DRAIN))).toEqual(["personal"]);
+    expect(ids(gateMembership(entries, NOW, DRAIN, WEEKDAYS))).toEqual([
+      "personal",
+      "work",
+    ]);
   });
 });
