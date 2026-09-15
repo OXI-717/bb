@@ -151,7 +151,7 @@ export function createClaudeAdapter(options: {
             context.quotas.get(context.account.id),
             context.now(),
           );
-          if (quota !== null) context.quotas.put(quota);
+          if (quota !== null) context.quotas.put({ ...quota, error: null });
         }
       } else {
         await response.body?.cancel();
