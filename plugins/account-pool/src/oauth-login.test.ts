@@ -67,6 +67,8 @@ function savedAccount(authenticated: ClaudeOAuthAccount): Account {
     createdAt: 1,
     lastUsedAt: null,
     lastUsedHostId: null,
+    role: "primary",
+    cap: null,
   };
 }
 

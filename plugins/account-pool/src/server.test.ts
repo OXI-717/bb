@@ -353,6 +353,8 @@ describe("Account Pool config schema", () => {
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       switchThreshold: 0.98,
       parentMode: "proxy",
+      routingStrategy: "sequential",
+      reserveDrainHours: 24,
     });
     expect(
       accountPoolConfigSetInputSchema.safeParse({
@@ -418,6 +420,8 @@ describe("Account Pool plugin", () => {
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       switchThreshold: 0.75,
       parentMode: "proxy",
+      routingStrategy: "sequential",
+      reserveDrainHours: 24,
     });
     expect(
       accountPoolConfigSchema.parse(await host.bb.storage.kv.get("config")),

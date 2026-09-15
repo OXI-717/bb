@@ -2,7 +2,9 @@ import type { BbPluginApi, PluginCliResult } from "@get-bb/plugin-sdk";
 import { setTimeout as wait } from "node:timers/promises";
 import {
   accountAddInputSchema,
+  accountCapInputSchema,
   accountIdInputSchema,
+  accountRoleInputSchema,
   accountPriorityInputSchema,
   accountReorderInputSchema,
   accountPoolConfigSetInputSchema,
@@ -47,12 +49,14 @@ const HELP = [
   "  bb pool account enable <id>",
   "  bb pool account disable <id>",
   "  bb pool account priority <id> <n>",
+  "  bb pool account role <id> <primary|reserve>",
+  "  bb pool account cap <id> <0..1|off>",
   "  bb pool account reorder <claude|codex> <id>...",
   "  bb pool account refresh <id>",
   "  bb pool status [--json]",
   "  bb pool routing <claude|codex> [--off]",
   "  bb pool config",
-  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode> <value>",
+  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours> <value>",
   "  bb pool parent [proxy|isolate]",
   "  bb pool token rotate --machine <id-or-name>",
   "  bb pool bypass <thread-id> [--off]",
@@ -148,6 +152,8 @@ function formatAccounts(accounts: readonly AccountSummary[]): string {
       "Kind",
       "Enabled",
       "Priority",
+      "Role",
+      "Cap",
       "5h",
       "5h reset",
       "7d",
@@ -165,6 +171,8 @@ function formatAccounts(accounts: readonly AccountSummary[]): string {
         account.kind,
         String(account.enabled),
         String(account.priority),
+        account.role,
+        account.cap === null ? "-" : formatUtilization(account.cap),
         formatUtilization(account.fiveHourUtilization),
         formatReset(account.fiveHourResetAt),
         formatUtilization(account.sevenDayUtilization),
@@ -212,6 +220,8 @@ function formatConfig(config: AccountPoolConfig): string {
     `codexUpstreamBaseUrl: ${config.codexUpstreamBaseUrl}`,
     `switchThreshold: ${config.switchThreshold}`,
     `parentMode: ${config.parentMode}`,
+    `routingStrategy: ${config.routingStrategy}`,
+    `reserveDrainHours: ${config.reserveDrainHours}`,
   ].join("\n");
 }
 
@@ -250,8 +260,16 @@ function parseConfigUpdate(
   if (key === "parentMode") {
     return accountPoolConfigSetInputSchema.parse({ parentMode: value });
   }
+  if (key === "routingStrategy") {
+    return accountPoolConfigSetInputSchema.parse({ routingStrategy: value });
+  }
+  if (key === "reserveDrainHours") {
+    return accountPoolConfigSetInputSchema.parse({
+      reserveDrainHours: Number(value),
+    });
+  }
   throw new Error(
-    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, or parentMode.",
+    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, parentMode, routingStrategy, or reserveDrainHours.",
   );
 }
 
@@ -343,7 +361,7 @@ export function registerPoolCli(
         name: "config-set",
         summary: "Update one Account Pooler routing configuration value",
         usage:
-          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode> <value>",
+          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours> <value>",
       },
       {
         name: "parent",
@@ -382,6 +400,33 @@ export function registerPoolCli(
           return {
             exitCode: 0,
             stdout: `Set ${account.label} priority to ${account.priority}.\n`,
+          };
+        }
+        if (argv[0] === "account" && argv[1] === "role") {
+          if (argv.length !== 4) throw new Error(HELP);
+          const input = accountRoleInputSchema.parse({
+            accountId: argv[2],
+            role: argv[3],
+          });
+          const account = await operations.setRole(input.accountId, input.role);
+          if (account === null) throw new Error("Account not found.");
+          return {
+            exitCode: 0,
+            stdout: `Set ${account.label} role to ${account.role}.\n`,
+          };
+        }
+        if (argv[0] === "account" && argv[1] === "cap") {
+          if (argv.length !== 4 || argv[3]?.trim() === "")
+            throw new Error(HELP);
+          const input = accountCapInputSchema.parse({
+            accountId: argv[2],
+            cap: argv[3] === "off" ? null : Number(argv[3]),
+          });
+          const account = await operations.setCap(input.accountId, input.cap);
+          if (account === null) throw new Error("Account not found.");
+          return {
+            exitCode: 0,
+            stdout: `Set ${account.label} cap to ${account.cap ?? "off"}.\n`,
           };
         }
         if (argv[0] === "account" && argv[1] === "reorder") {

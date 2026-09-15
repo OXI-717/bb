@@ -61,6 +61,8 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     createdAt: 1,
     lastUsedAt: 2,
     lastUsedHostId: "host-one",
+    role: "primary",
+    cap: null,
     lastUsedHostName: "bee",
     fiveHourUtilization: 0.21,
     fiveHourResetAt: null,
@@ -107,6 +109,8 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
     codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
     switchThreshold: 0.98,
     parentMode: "proxy",
+    routingStrategy: "sequential",
+    reserveDrainHours: 24,
     ...overrides,
   };
 }

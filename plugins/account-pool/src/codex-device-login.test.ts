@@ -73,6 +73,8 @@ function summary(account: CodexDeviceAccount): AccountSummary {
     createdAt: 1,
     lastUsedAt: null,
     lastUsedHostId: null,
+    role: "primary",
+    cap: null,
     lastUsedHostName: null,
     fiveHourUtilization: null,
     fiveHourResetAt: null,

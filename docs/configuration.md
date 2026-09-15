@@ -828,6 +828,30 @@ family without moving the session's main pin or the provider cursor. The cursor
 and session pins survive hub restarts. Session pins expire after 30 idle minutes,
 and the pool retains the 4,096 most recently used pins.
 
+Set `routingStrategy` to `balanced` to route new conversations and failover to
+the eligible account with the most quota to spend before its reset instead of
+the next account in priority order. The score is the unused fraction of the
+busiest window of a day or longer divided by the fraction of that window left
+until reset, scaled down once a shorter window passes 80 percent and by the
+account's in-flight requests; ties keep priority order. Existing conversations
+stay pinned exactly as in `sequential`, the default.
+
+Each account also has a `role` and an optional weekly `cap`, independent of
+`routingStrategy`. `primary` accounts take traffic normally; `reserve` accounts
+take it only when no primary account is eligible. A cap is the weekly quota
+fraction above which the pool leaves the account alone, for example an account
+shared with other people; reserve accounts without an explicit cap stop at
+`0.5`. Within `reserveDrainHours` (default `24`) of an account's weekly reset,
+the pool treats it as primary and ignores its cap up to `switchThreshold`, so
+quota that would expire unused is spent first.
+
+```sh
+bb pool account role <id> <primary|reserve>
+bb pool account cap <id> <0..1|off>
+bb pool config set routingStrategy balanced
+bb pool config set reserveDrainHours 24
+```
+
 Use the up/down arrows in Account Pooler settings, or
 `bb pool account reorder <claude|codex> <id>...`, to set the complete order for
 one provider. Include disabled accounts too. Reordering changes the next failover
