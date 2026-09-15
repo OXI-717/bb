@@ -77,7 +77,10 @@ export class AccountStore {
   }
 
   async add(
-    input: Omit<Account, "id" | "createdAt" | "lastUsedAt" | "lastUsedHostId">,
+    input: Omit<
+      Account,
+      "id" | "createdAt" | "lastUsedAt" | "lastUsedHostId" | "role" | "cap"
+    >,
     secret: AccountSecret,
   ): Promise<Account> {
     return this.serialized(async () => {
@@ -118,6 +121,14 @@ export class AccountStore {
 
   async setPriority(id: string, priority: number): Promise<Account | null> {
     return this.update(id, (account) => ({ ...account, priority }));
+  }
+
+  async setRole(id: string, role: Account["role"]): Promise<Account | null> {
+    return this.update(id, (account) => ({ ...account, role }));
+  }
+
+  async setCap(id: string, cap: Account["cap"]): Promise<Account | null> {
+    return this.update(id, (account) => ({ ...account, cap }));
   }
 
   async reorder(provider: PoolProvider, accountIds: string[]): Promise<void> {

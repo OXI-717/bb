@@ -360,7 +360,7 @@ export function createCodexAdapter(options: {
         context.quotas.get(context.account.id),
         context.now(),
       );
-      if (quota !== null) context.quotas.put(quota);
+      if (quota !== null) context.quotas.put({ ...quota, error: null });
     },
     errorResponse(status, message, headers) {
       return Response.json(

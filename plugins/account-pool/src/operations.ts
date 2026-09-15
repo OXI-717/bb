@@ -187,6 +187,18 @@ export class PoolOperations {
     return account;
   }
 
+  async setRole(id: string, role: Account["role"]): Promise<Account | null> {
+    const account = await this.accounts.setRole(id, role);
+    if (account !== null) this.onAccountsChanged();
+    return account;
+  }
+
+  async setCap(id: string, cap: Account["cap"]): Promise<Account | null> {
+    const account = await this.accounts.setCap(id, cap);
+    if (account !== null) this.onAccountsChanged();
+    return account;
+  }
+
   async reorder(provider: PoolProvider, accountIds: string[]): Promise<void> {
     await this.accounts.reorder(provider, accountIds);
     this.onAccountsChanged();

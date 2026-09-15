@@ -61,6 +61,8 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     createdAt: 1,
     lastUsedAt: 2,
     lastUsedHostId: "host-one",
+    role: "primary",
+    cap: null,
     lastUsedHostName: "bee",
     fiveHourUtilization: 0.21,
     fiveHourResetAt: null,
@@ -105,6 +107,9 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
     anthropicUpstreamBaseUrl: "https://api.anthropic.com",
     codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
     switchThreshold: 0.98,
+    routingStrategy: "sequential",
+    reserveDrainHours: 24,
+    restDays: [0, 6],
     ...overrides,
   };
 }

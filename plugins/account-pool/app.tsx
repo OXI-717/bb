@@ -84,7 +84,10 @@ type DialogState =
   | { kind: "claude-login" | "codex-login" | "api-key" }
   | null;
 
-type ConfigField = keyof AccountPoolConfig;
+type ConfigField = Exclude<
+  keyof AccountPoolConfig,
+  "routingStrategy" | "reserveDrainHours" | "restDays"
+>;
 
 const PROVIDERS: Array<{
   id: PoolProvider;

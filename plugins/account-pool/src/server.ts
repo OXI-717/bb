@@ -53,6 +53,9 @@ export interface AccountPoolPluginOptions {
 
 const DISPOSE_INSPECTION_TIMEOUT_MS = 2_000;
 const DISPOSE_INSPECTION_TIMEOUT = Symbol("dispose-inspection-timeout");
+function hubBasePath(pluginId: string): string {
+  return `/api/v1/plugins/${pluginId}/http`;
+}
 
 export function helloResponse(): Response {
   return new Response(null, { status: 200 });
@@ -101,6 +104,7 @@ export function createAccountPoolPlugin(
       options.fetch === undefined ? createUpstreamTransport() : null;
     const upstreamFetch = options.fetch ?? transport?.fetch;
     const hub = createHub({
+      route: hubBasePath(bb.pluginId),
       accounts,
       quotas,
       affinity: new PoolAffinityStore(db),
@@ -189,9 +193,7 @@ export function createAccountPoolPlugin(
       return [
         {
           name: "ANTHROPIC_BASE_URL",
-          value: {
-            serverPath: "/api/v1/plugins/account-pool/http",
-          },
+          value: { serverPath: hubBasePath(bb.pluginId) },
           reason: "Routed through the Account Pooler hub",
         },
         {
@@ -222,9 +224,7 @@ export function createAccountPoolPlugin(
       return [
         {
           name: "CODEX_OPENAI_BASE_URL",
-          value: {
-            serverPath: "/api/v1/plugins/account-pool/http/v1",
-          },
+          value: { serverPath: `${hubBasePath(bb.pluginId)}/v1` },
           reason: "Routed through the Account Pooler hub",
         },
         {

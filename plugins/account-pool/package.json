@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-account-pool",
+  "name": "bb-plugin-account-pool-balanced",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "bb": ">=0.0"
   },
   "bb": {
-    "name": "Account Pooler [Experimental]",
+    "name": "Account Pooler Balanced",
     "description": "Routes Claude and Codex API traffic across provider account pools.",
     "branding": {
       "icon": "Layers"

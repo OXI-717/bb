@@ -20,6 +20,7 @@ import type {
   ImportedClaudeCredentials,
   ImportedCodexCredentials,
 } from "./credentials.js";
+import { gateMembership, rankByBalance } from "./balancer.js";
 import {
   accountStatus,
   blockingResetAt,
@@ -36,7 +37,6 @@ import type {
   QuotaStore,
 } from "./store.js";
 
-const ROUTE = "/api/v1/plugins/account-pool/http";
 const DEFAULT_REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
@@ -62,6 +62,7 @@ const DROPPED_RESPONSE_HEADERS = new Set([
 ]);
 
 interface HubOptions {
+  route: string;
   accounts: AccountStore;
   quotas: QuotaStore;
   affinity: PoolAffinityStore;
@@ -263,7 +264,7 @@ export class AccountPoolHub {
       (left, right) => left.priority - right.priority,
     );
     return {
-      route: ROUTE,
+      route: this.options.route,
       enabledAccountCount: accounts.filter((account) => account.enabled).length,
       inFlight: this.inFlightCount(),
       accepting: this.accepting,
@@ -675,15 +676,26 @@ export class AccountPoolHub {
     );
     signal.throwIfAborted();
     const now = this.options.now();
-    const threshold = this.options.getSettings().switchThreshold;
-    const available = accounts
-      .filter((account) => account.provider === provider && account.enabled)
-      .map((account) => ({
-        account,
-        quota: this.options.quotas.get(account.id),
-      }))
-      .filter(({ quota }) => quota.error === null)
-      .filter(({ quota }) => !isSharedQuotaExhausted(quota, threshold, now));
+    const settings = this.options.getSettings();
+    const threshold = settings.switchThreshold;
+    const balanced = settings.routingStrategy === "balanced";
+    const workWeek = {
+      restDays: settings.restDays,
+      offsetMinutes: -new Date(now).getTimezoneOffset(),
+    };
+    const available = gateMembership(
+      accounts
+        .filter((account) => account.provider === provider && account.enabled)
+        .map((account) => ({
+          account,
+          quota: this.options.quotas.get(account.id),
+        }))
+        .filter(({ quota }) => quota.error === null)
+        .filter(({ quota }) => !isSharedQuotaExhausted(quota, threshold, now)),
+      now,
+      settings.reserveDrainHours * 60 * 60 * 1_000,
+      workWeek,
+    );
     const eligible = available.filter(
       ({ quota }) => !isQuotaExhausted(quota, family, threshold, now),
     );
@@ -728,16 +740,24 @@ export class AccountPoolHub {
       ...accounts.slice(anchorIndex + 1),
       ...accounts.slice(0, anchorIndex + 1),
     ];
-    const next = ordered
-      .map((account) =>
-        candidates.find((candidate) => candidate.account.id === account.id),
-      )
-      .find((candidate) => candidate !== undefined);
+    const next = balanced
+      ? rankByBalance(
+          candidates,
+          (accountId) => this.inFlightByAccount.get(accountId) ?? 0,
+          now,
+          workWeek,
+        )[0]
+      : ordered
+          .map((account) =>
+            candidates.find((candidate) => candidate.account.id === account.id),
+          )
+          .find((candidate) => candidate !== undefined);
     const selected =
       bound !== undefined && unattempted.includes(bound)
         ? bound
         : (inherited ??
-          (boundAccountId === null &&
+          (!balanced &&
+          boundAccountId === null &&
           previousAccountId === null &&
           activeAccount !== undefined &&
           unattempted.includes(activeAccount)
@@ -1142,6 +1162,7 @@ export class AccountPoolHub {
 }
 
 export function createHub(options: {
+  route: string;
   accounts: AccountStore;
   quotas: QuotaStore;
   affinity: PoolAffinityStore;
@@ -1181,6 +1202,7 @@ export function createHub(options: {
     ],
   ]);
   return new AccountPoolHub({
+    route: options.route,
     accounts: options.accounts,
     quotas: options.quotas,
     affinity: options.affinity,

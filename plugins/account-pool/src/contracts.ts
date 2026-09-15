@@ -4,6 +4,9 @@ export const DEFAULT_ACCOUNT_POOL_CONFIG = {
   anthropicUpstreamBaseUrl: "https://api.anthropic.com",
   codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
   switchThreshold: 0.98,
+  routingStrategy: "sequential" as const,
+  reserveDrainHours: 24,
+  restDays: [0, 6],
 };
 
 const httpUrlSchema = z
@@ -19,6 +22,34 @@ const switchThresholdSchema = z
   .positive("Must be greater than 0.")
   .max(1, "Must be at most 1.");
 
+
+export const routingStrategySchema = z.enum(["sequential", "balanced"]);
+
+export const accountRoleSchema = z.enum(["primary", "reserve"]);
+
+const capFractionSchema = z
+  .number()
+  .min(0, "Must be at least 0.")
+  .max(1, "Must be at most 1.");
+
+export const accountCapSchema = z
+  .object({ early: capFractionSchema, late: capFractionSchema })
+  .strict()
+  .refine((cap) => cap.early <= cap.late, "early must not exceed late.")
+  .nullable();
+
+const reserveDrainHoursSchema = z
+  .number()
+  .positive("Must be greater than 0.")
+  .max(168, "Must be at most 168.");
+
+const restDaysSchema = z
+  .array(z.number().int().min(0).max(6))
+  .refine(
+    (days) => new Set(days).size === days.length,
+    "Weekdays must be unique.",
+  );
+
 export const accountPoolConfigSchema = z
   .object({
     anthropicUpstreamBaseUrl: httpUrlSchema.default(
@@ -30,6 +61,13 @@ export const accountPoolConfigSchema = z
     switchThreshold: switchThresholdSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.switchThreshold,
     ),
+    routingStrategy: routingStrategySchema.default(
+      DEFAULT_ACCOUNT_POOL_CONFIG.routingStrategy,
+    ),
+    reserveDrainHours: reserveDrainHoursSchema.default(
+      DEFAULT_ACCOUNT_POOL_CONFIG.reserveDrainHours,
+    ),
+    restDays: restDaysSchema.default(DEFAULT_ACCOUNT_POOL_CONFIG.restDays),
   })
   .strict();
 
@@ -40,6 +78,9 @@ export const accountPoolConfigSetInputSchema = z
     anthropicUpstreamBaseUrl: httpUrlSchema.optional(),
     codexUpstreamBaseUrl: httpUrlSchema.optional(),
     switchThreshold: switchThresholdSchema.optional(),
+    routingStrategy: routingStrategySchema.optional(),
+    reserveDrainHours: reserveDrainHoursSchema.optional(),
+    restDays: restDaysSchema.optional(),
   })
   .strict();
 
@@ -127,6 +168,8 @@ export const accountSchema = z
     createdAt: z.number().int().nonnegative(),
     lastUsedAt: z.number().int().nonnegative().nullable().default(null),
     lastUsedHostId: z.string().min(1).nullable().default(null),
+    role: accountRoleSchema.default("primary"),
+    cap: accountCapSchema.default(null),
   })
   .strict();
 
@@ -296,6 +339,14 @@ export const accountIdInputSchema = z
 
 export const accountPriorityInputSchema = z
   .object({ accountId: z.string().uuid(), priority: z.number().int() })
+  .strict();
+
+export const accountRoleInputSchema = z
+  .object({ accountId: z.string().uuid(), role: accountRoleSchema })
+  .strict();
+
+export const accountCapInputSchema = z
+  .object({ accountId: z.string().uuid(), cap: accountCapSchema })
   .strict();
 
 export const accountReorderInputSchema = z

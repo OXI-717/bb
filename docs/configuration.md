@@ -793,6 +793,38 @@ family without moving the session's main pin or the provider cursor. The cursor
 and session pins survive hub restarts. Session pins expire after 30 idle minutes,
 and the pool retains the 4,096 most recently used pins.
 
+Set `routingStrategy` to `balanced` to route new conversations and failover to
+the eligible account with the most quota to spend before its reset instead of
+the next account in priority order. The score is the unused fraction of the
+busiest window of a day or longer divided by the fraction of that window left
+until reset, scaled down once a shorter window passes 80 percent and by the
+account's in-flight requests; ties keep priority order. Existing conversations
+stay pinned exactly as in `sequential`, the default.
+
+Each account also has a `role` and an optional progressive weekly `cap`,
+independent of `routingStrategy`. `primary` accounts take traffic normally;
+`reserve` accounts take it only when no primary account is eligible or within
+`reserveDrainHours` (default `24`) of their weekly reset. A cap has `early` and
+`late` quota fractions: the pool leaves the account alone once its weekly
+utilization reaches a limit that moves linearly from `early` with a full window
+left to `late` at the reset, and holds it to `early` while the reset is unknown.
+This keeps accounts shared with other people untouched early in the week while
+still spending quota that would expire. Reserve accounts without an explicit cap
+use `0.15` to `0.98`.
+
+Window progress, the drain window, and the balanced score count working time
+only. `restDays` lists weekdays in the bb server's time zone (`0` is Sunday)
+that do not count and defaults to `0,6`, so on Friday a reset after the weekend
+already has little working time left; `none` counts every day.
+
+```sh
+bb pool account role <id> <primary|reserve>
+bb pool account cap <id> <early> <late>
+bb pool account cap <id> off
+bb pool config set routingStrategy balanced
+bb pool config set reserveDrainHours 24
+```
+
 Use the up/down arrows in Account Pooler settings, or
 `bb pool account reorder <claude|codex> <id>...`, to set the complete order for
 one provider. Include disabled accounts too. Reordering changes the next failover

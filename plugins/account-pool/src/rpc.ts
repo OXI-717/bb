@@ -2,6 +2,8 @@ import { defineRpcContract, type PluginRpcHandlers } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   accountAddInputSchema,
+  accountCapInputSchema,
+  accountRoleInputSchema,
   accountPoolConfigSchema,
   accountPoolConfigSetInputSchema,
   accountIdInputSchema,
@@ -50,6 +52,14 @@ export const accountPoolRpcContract = defineRpcContract({
   },
   "account.setPriority": {
     input: accountPriorityInputSchema,
+    output: z.object({ account: accountSchema.nullable() }).strict(),
+  },
+  "account.setRole": {
+    input: accountRoleInputSchema,
+    output: z.object({ account: accountSchema.nullable() }).strict(),
+  },
+  "account.setCap": {
+    input: accountCapInputSchema,
     output: z.object({ account: accountSchema.nullable() }).strict(),
   },
   "account.reorder": {
@@ -132,6 +142,12 @@ export function createRpcHandlers(
     }),
     "account.setPriority": async ({ accountId, priority }) => ({
       account: await operations.setPriority(accountId, priority),
+    }),
+    "account.setRole": async ({ accountId, role }) => ({
+      account: await operations.setRole(accountId, role),
+    }),
+    "account.setCap": async ({ accountId, cap }) => ({
+      account: await operations.setCap(accountId, cap),
     }),
     "account.refreshUsage": async ({ accountId }) => ({
       account: await operations.refreshUsage(accountId),

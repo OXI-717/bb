@@ -346,6 +346,9 @@ describe("Account Pool config schema", () => {
       anthropicUpstreamBaseUrl: "https://api.anthropic.com",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       switchThreshold: 0.98,
+      routingStrategy: "sequential",
+      reserveDrainHours: 24,
+      restDays: [0, 6],
     });
     expect(
       accountPoolConfigSetInputSchema.safeParse({
@@ -410,6 +413,9 @@ describe("Account Pool plugin", () => {
       anthropicUpstreamBaseUrl: "http://127.0.0.1:9000",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       switchThreshold: 0.75,
+      routingStrategy: "sequential",
+      reserveDrainHours: 24,
+      restDays: [0, 6],
     });
     expect(
       accountPoolConfigSchema.parse(await host.bb.storage.kv.get("config")),
@@ -5604,6 +5610,116 @@ describe("sequential pool recovery", () => {
         ?.status,
     ).toBe("exhausted");
   });
+  it("routes sessions to its own plugin id when installed under another name", async () => {
+    const dataDir = await mkdtemp(path.join(tmpdir(), "bb-account-pool-id-"));
+    const host = createFakePluginHost({
+      pluginId: "account-pool-balanced",
+      dataDir,
+      sdk: sdkStubs(),
+    });
+    await createAccountPoolPlugin({ usageUrl: "data:application/json,{}" })(
+      host.bb,
+    );
+    const service = host.harness.behavior.runService("hub");
+    cleanups.push(async () => {
+      service.controller.abort();
+      await service.done;
+      await host.harness.lifecycle.dispose();
+      await fs.rm(dataDir, { recursive: true, force: true });
+    });
+    await host.harness.behavior.callRpc("account.add", {
+      provider: "claude",
+      source: { kind: "api-key", apiKey: "sk-renamed" },
+      label: null,
+      priority: 100,
+    });
+    await vi.waitFor(async () => {
+      expect(
+        statusSchema.parse(
+          await host.harness.behavior.callRpc("status.get", null),
+        ),
+      ).toMatchObject({
+        accepting: true,
+        route: "/api/v1/plugins/account-pool-balanced/http",
+      });
+    });
+    const entries = await host.harness.behavior.resolveProviderEnv(
+      "claude-code",
+      { threadId: "thread-one", projectId: "project-one", hostId: "host-one" },
+    );
+    expect(
+      entries.find((entry) => entry.name === "ANTHROPIC_BASE_URL")?.value,
+    ).toEqual({ serverPath: "/api/v1/plugins/account-pool-balanced/http" });
+  });
+
+  it("keeps reserve accounts out of routing while a primary account is eligible", async () => {
+    const attempts: Array<string | null> = [];
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      apiKey: "sk-work",
+      priority: 0,
+      options: {
+        fetch: async (_input, init) => {
+          attempts.push(new Headers(init?.headers).get("x-api-key"));
+          return Response.json({}, { status: 200 });
+        },
+      },
+    });
+    const personal = await addApiAccount(fixture, "sk-personal", 100);
+    const role = await fixture.host.harness.behavior.runCli([
+      "account",
+      "role",
+      fixture.account.id,
+      "reserve",
+    ]);
+    expect(role.exitCode).toBe(0);
+    expect(role.stdout).toContain("role to reserve");
+    const cap = await fixture.host.harness.behavior.runCli([
+      "account",
+      "cap",
+      personal.id,
+      "0.2",
+      "0.9",
+    ]);
+    expect(cap.exitCode).toBe(0);
+    const send = async (session: string) => {
+      const response = await fixture.host.harness.behavior.fetchHttp(
+        "POST",
+        "/v1/messages",
+        {
+          headers: authHeaders(fixture.key),
+          body: JSON.stringify({
+            metadata: { user_id: JSON.stringify({ session_id: session }) },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      await response.text();
+    };
+    await send("first");
+    await send("second");
+    await fixture.host.harness.behavior.callRpc("account.disable", {
+      id: personal.id,
+    });
+    await send("after-primary-disabled");
+    expect(attempts).toEqual(["sk-personal", "sk-personal", "sk-work"]);
+    const listed = z
+      .array(accountSummarySchema)
+      .parse(await fixture.host.harness.behavior.callRpc("account.list", null));
+    expect(
+      listed.find((account) => account.id === fixture.account.id),
+    ).toMatchObject({ role: "reserve", cap: null });
+    expect(
+      listed.find((account) => account.id === personal.id),
+    ).toMatchObject({ role: "primary", cap: { early: 0.2, late: 0.9 } });
+    await expect(
+      fixture.host.harness.behavior.callRpc("account.setCap", {
+        accountId: personal.id,
+        cap: { early: 0.9, late: 0.2 },
+      }),
+    ).rejects.toThrow();
+  });
+
   it("applies reordered failover atomically without moving current conversations", async () => {
     const attempts: Array<string | null> = [];
     let rejectFirst = false;
