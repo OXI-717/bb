@@ -227,6 +227,7 @@ export const accountSummarySchema = accountSchema.extend({
   lastUsedHostName: z.string().min(1).nullable(),
   ...quotaFieldsShape,
   inFlight: z.number().int().nonnegative(),
+  capLimit: z.number().nullable(),
   status: z.enum(["disabled", "ready", "held", "exhausted", "error"]),
 });
 
@@ -263,6 +264,12 @@ export const statusSchema = z
     accepting: z.boolean(),
     hosts: z.array(hubTokenSummarySchema),
     accounts: z.array(accountSummarySchema),
+    activeAccounts: z
+      .object({
+        claude: z.string().uuid().nullable(),
+        codex: z.string().uuid().nullable(),
+      })
+      .strict(),
     routing: z.object({ claude: z.boolean(), codex: z.boolean() }).strict(),
   })
   .strict();

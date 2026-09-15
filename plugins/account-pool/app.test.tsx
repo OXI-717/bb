@@ -83,12 +83,16 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     heldUntil: null,
     error: null,
     inFlight: 0,
+    capLimit: null,
     status: "ready",
     ...overrides,
   };
 }
 
-function status(accounts: AccountSummary[] = [account()]): PoolStatus {
+function status(
+  accounts: AccountSummary[] = [account()],
+  activeAccounts: PoolStatus["activeAccounts"] = { claude: null, codex: null },
+): PoolStatus {
   return {
     route: "/api/v1/plugins/account-pool/http",
     enabledAccountCount: accounts.filter((item) => item.enabled).length,
@@ -98,6 +102,7 @@ function status(accounts: AccountSummary[] = [account()]): PoolStatus {
       { hostId: "host-one", hostName: "bee", mintedAt: 1, lastUsedAt: 2 },
     ],
     accounts,
+    activeAccounts,
     routing: { claude: true, codex: true },
   };
 }
@@ -368,6 +373,105 @@ describe("Account Pool settings", () => {
       expect(slot.rpcCalls).toContainEqual({
         method: "config.set",
         input: { anthropicUpstreamBaseUrl: "https://proxy.example.com" },
+      }),
+    );
+  });
+
+  it("marks the current account, reserve role, and live cap in each row", async () => {
+    const work = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "work@example.com",
+      email: "work@example.com",
+      role: "reserve",
+      capLimit: 0.39,
+    });
+    const slot = render([account(), work], {
+      "status.get": () =>
+        status([account(), work], { claude: account().id, codex: null }),
+    });
+    expect(
+      await slot.findByText("Current Claude: person@example.com"),
+    ).toBeTruthy();
+    expect(slot.getByText("Current Codex: none")).toBeTruthy();
+    expect(slot.getAllByText("Current")).toHaveLength(1);
+    expect(slot.getAllByText("Reserve")).toHaveLength(1);
+    expect(slot.getByText("cap 39% now (15%→98%)")).toBeTruthy();
+  });
+
+  it("saves a role and a weekly cap from the row actions", async () => {
+    const slot = render([account()], {
+      "account.setRole": () => ({ account: null }),
+      "account.setCap": () => ({ account: null }),
+    });
+    fireEvent.pointerDown(
+      await slot.findByRole("button", { name: "person@example.com actions" }),
+    );
+    fireEvent.click(await slot.findByText("Set role…"));
+    fireEvent.click(await slot.findByRole("button", { name: "Reserve" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "account.setRole",
+        input: { accountId: account().id, role: "reserve" },
+      }),
+    );
+    await waitFor(() => expect(slot.queryByText("Set role")).toBeNull());
+    fireEvent.pointerDown(
+      await slot.findByRole("button", { name: "person@example.com actions" }),
+    );
+    fireEvent.click(await slot.findByText("Set weekly cap…"));
+    fireEvent.change(await slot.findByLabelText("Cap at week start"), {
+      target: { value: "0.2" },
+    });
+    fireEvent.change(slot.getByLabelText("Cap at reset"), {
+      target: { value: "0.9" },
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "account.setCap",
+        input: { accountId: account().id, cap: { early: 0.2, late: 0.9 } },
+      }),
+    );
+  });
+
+  it("switches balanced routing and saves drain hours and rest days", async () => {
+    const slot = render([account()], {
+      "config.set": () => config({ routingStrategy: "balanced" }),
+    });
+    const balanced = await slot.findByRole("switch", {
+      name: "Balanced routing",
+    });
+    await waitFor(() =>
+      expect((balanced as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(balanced);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { routingStrategy: "balanced" },
+      }),
+    );
+    const drain = await slot.findByLabelText("Reserve drain hours");
+    await waitFor(() =>
+      expect((drain as HTMLInputElement).disabled).toBe(false),
+    );
+    fireEvent.change(drain, { target: { value: "12" } });
+    fireEvent.blur(drain);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { reserveDrainHours: 12 },
+      }),
+    );
+    const rest = slot.getByLabelText("Rest days");
+    await waitFor(() => expect((rest as HTMLInputElement).disabled).toBe(false));
+    fireEvent.change(rest, { target: { value: "5,6" } });
+    fireEvent.blur(rest);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { restDays: [5, 6] },
       }),
     );
   });

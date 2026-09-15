@@ -5703,6 +5703,20 @@ describe("sequential pool recovery", () => {
     });
     await send("after-primary-disabled");
     expect(attempts).toEqual(["sk-personal", "sk-personal", "sk-work"]);
+    const pool = statusSchema.parse(
+      await fixture.host.harness.behavior.callRpc("status.get", null),
+    );
+    expect(pool.activeAccounts).toEqual({
+      claude: fixture.account.id,
+      codex: null,
+    });
+    expect(
+      pool.accounts.find((account) => account.id === fixture.account.id)
+        ?.capLimit,
+    ).toBe(0.15);
+    expect(
+      pool.accounts.find((account) => account.id === personal.id)?.capLimit,
+    ).toBe(0.2);
     const listed = z
       .array(accountSummarySchema)
       .parse(await fixture.host.harness.behavior.callRpc("account.list", null));
