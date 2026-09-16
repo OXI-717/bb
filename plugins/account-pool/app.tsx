@@ -634,12 +634,15 @@ function QuotaDetail({
   label,
   quota,
   threshold,
+  skipAt,
 }: {
   label: string;
   quota: FamilyQuota | null;
   threshold: number;
+  skipAt?: number;
 }) {
   const utilization = quota?.utilization ?? null;
+  const limit = skipAt ?? threshold;
   return (
     <div className="grid grid-cols-[7rem_1fr] items-center gap-3 text-sm">
       <div className="text-muted-foreground">{label}</div>
@@ -648,9 +651,9 @@ function QuotaDetail({
           <div
             className={cn(
               "h-full rounded-full",
-              utilization !== null && utilization >= 1
+              utilization !== null && utilization >= limit
                 ? "bg-destructive"
-                : utilization !== null && utilization >= threshold - 0.1
+                : utilization !== null && utilization >= limit - 0.1
                   ? "bg-warning"
                   : "bg-primary",
             )}
@@ -664,7 +667,7 @@ function QuotaDetail({
           {quota?.resetAt === null || quota === null
             ? ""
             : ` · ${resetLabel(quota.resetAt)}`}{" "}
-          · will be skipped at {Math.round(threshold * 100)}%
+          · will be skipped at {Math.round(limit * 100)}%
         </div>
       </div>
     </div>
@@ -1535,6 +1538,11 @@ function AccountPoolSettings() {
           <AccountDialog
             account={selectedAccount}
             threshold={threshold}
+            current={selectedAccount.id === currentId(selectedAccount.provider)}
+            drainHours={
+              config?.reserveDrainHours ??
+              DEFAULT_ACCOUNT_POOL_CONFIG.reserveDrainHours
+            }
             close={closeDialog}
             act={(action) => void accountAction(selectedAccount, action)}
           />
@@ -1838,17 +1846,35 @@ function AccountPoolSettings() {
   );
 }
 
+function capSummary(account: AccountSummary): string | null {
+  const curve =
+    account.cap ?? (account.role === "reserve" ? DEFAULT_RESERVE_CAP : null);
+  if (curve === null) return null;
+  return `${percent(curve.early)} → ${percent(curve.late)}${
+    account.capLimit === null ? "" : ` · ${percent(account.capLimit)} now`
+  }`;
+}
+
 function AccountDialog({
   account,
   threshold,
+  current,
+  drainHours,
   close,
   act,
 }: {
   account: AccountSummary;
   threshold: number;
+  current: boolean;
+  drainHours: number;
   close: () => void;
   act: (action: "toggle" | "refresh" | "remove") => void;
 }) {
+  const cap = capSummary(account);
+  const weeklySkipAt =
+    account.capLimit === null
+      ? undefined
+      : Math.min(threshold, account.capLimit);
   const shared = (
     utilization: number | null,
     resetAt: number | null,
@@ -1888,12 +1914,27 @@ function AccountDialog({
         </>
       }
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <SettingsBadge>{tier(account)}</SettingsBadge>
         <SettingsBadge>
           {statusPresentation(account, threshold).label}
         </SettingsBadge>
+        <SettingsBadge>
+          {account.role === "reserve" ? "Reserve" : "Primary"}
+        </SettingsBadge>
+        {current ? <SettingsBadge>Current</SettingsBadge> : null}
       </div>
+      {account.role === "reserve" ? (
+        <p className="text-sm text-muted-foreground">
+          {`Used only when no primary account is eligible, or within ${drainHours} working hours of its weekly reset.`}
+        </p>
+      ) : null}
+      {cap === null ? null : (
+        <div className="grid grid-cols-[7rem_1fr] items-center gap-3 text-sm">
+          <div className="text-muted-foreground">Weekly cap</div>
+          <div className="min-w-0">{cap}</div>
+        </div>
+      )}
       <div className="space-y-4">
         {account.provider === "codex" ? (
           account.limitWindows.length === 0 ? (
@@ -1907,6 +1948,11 @@ function AccountDialog({
                 label={windowLongLabel(window)}
                 quota={window}
                 threshold={threshold}
+                skipAt={
+                  (window.windowMinutes ?? 0) >= 1_440
+                    ? weeklySkipAt
+                    : undefined
+                }
               />
             ))
           )
@@ -1929,6 +1975,7 @@ function AccountDialog({
                 account.sevenDayStatus,
               )}
               threshold={threshold}
+              skipAt={weeklySkipAt}
             />
             {modelFamilySchema.options.flatMap((family) =>
               account.familyWeekly[family] === null
@@ -1939,6 +1986,7 @@ function AccountDialog({
                       label={FAMILY_LABELS[family]}
                       quota={account.familyWeekly[family]}
                       threshold={threshold}
+                      skipAt={weeklySkipAt}
                     />,
                   ],
             )}
