@@ -86,6 +86,7 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     capLimit: null,
     eligible: true,
     capReached: false,
+    drainOpensAt: null,
     status: "ready",
     ...overrides,
   };
@@ -466,16 +467,59 @@ describe("Account Pool settings", () => {
         input: { reserveDrainHours: 12 },
       }),
     );
-    const rest = slot.getByLabelText("Rest days");
-    await waitFor(() => expect((rest as HTMLInputElement).disabled).toBe(false));
-    fireEvent.change(rest, { target: { value: "5,6" } });
-    fireEvent.blur(rest);
+    expect(
+      slot.getByText("Sun, Sat do not count toward a reset."),
+    ).toBeTruthy();
+    const friday = slot.getByRole("button", { name: "Fri" });
+    await waitFor(() =>
+      expect((friday as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(friday);
     await waitFor(() =>
       expect(slot.rpcCalls).toContainEqual({
         method: "config.set",
-        input: { restDays: [5, 6] },
+        input: { restDays: [0, 5, 6] },
       }),
     );
+    fireEvent.click(slot.getByRole("button", { name: "Sun" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { restDays: [6] },
+      }),
+    );
+  });
+
+  it("lists when each reserve account joins the primary ones", async () => {
+    const soon = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "work-soon@example.com",
+      email: "work-soon@example.com",
+      role: "reserve",
+      capLimit: 0.8,
+      drainOpensAt: Date.now() - 60_000,
+      sevenDayResetAt: Date.now() + 60 * 60 * 1_000,
+    });
+    const later = account({
+      id: "33333333-3333-4333-8333-333333333333",
+      label: "work-later@example.com",
+      email: "work-later@example.com",
+      role: "reserve",
+      capLimit: 0.3,
+      drainOpensAt: Date.now() + 2 * 24 * 60 * 60 * 1_000,
+      sevenDayResetAt: Date.now() + 3 * 24 * 60 * 60 * 1_000,
+    });
+    const slot = render([account(), later, soon]);
+    expect(await slot.findByText("Drain windows")).toBeTruthy();
+    expect(slot.getByText("open now")).toBeTruthy();
+    const rows = slot
+      .getAllByRole("row")
+      .map((row) => row.textContent ?? "")
+      .filter((text) => text.includes("@example.com"));
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("work-soon@example.com");
+    expect(rows[1]).toContain("work-later@example.com");
+    expect(rows[1]).toContain("30%");
   });
 
   it("separates a capped account from a reserve account on standby", async () => {

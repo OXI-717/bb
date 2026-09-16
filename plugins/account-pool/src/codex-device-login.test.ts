@@ -98,6 +98,7 @@ function summary(account: CodexDeviceAccount): AccountSummary {
     capLimit: null,
     eligible: true,
     capReached: false,
+    drainOpensAt: null,
     status: "ready",
   };
 }

@@ -22,6 +22,7 @@ import type {
 } from "./credentials.js";
 import {
   capLimit,
+  drainOpensAt,
   gateMembership,
   rankByBalance,
   weeklyUtilization,
@@ -312,6 +313,7 @@ export class AccountPoolHub {
           inFlight: this.inFlightByAccount.get(account.id) ?? 0,
           capLimit: limit,
           eligible: eligibleIds.has(account.id),
+          drainOpensAt: drainOpensAt(quota, now, drainMs, workWeek),
           capReached:
             limit !== null && (weeklyUtilization(quota, now) ?? 0) >= limit,
           status: accountStatus(account, quota, settings.switchThreshold, now),

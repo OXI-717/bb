@@ -230,6 +230,7 @@ export const accountSummarySchema = accountSchema.extend({
   capLimit: z.number().nullable(),
   eligible: z.boolean(),
   capReached: z.boolean(),
+  drainOpensAt: z.number().int().nullable(),
   status: z.enum(["disabled", "ready", "held", "exhausted", "error"]),
 });
 

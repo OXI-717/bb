@@ -195,6 +195,26 @@ function effectiveCap(account: PoolMembership): ProgressiveCap | null {
   );
 }
 
+export function drainOpensAt(
+  quota: AccountQuota,
+  now: number,
+  drainMs: number,
+  week: WorkWeek = CALENDAR_WEEK,
+): number | null {
+  const weekly = weeklyWindow(quotaWindows(quota, now));
+  if (weekly === null || weekly.resetAt === null) return null;
+  const start = weekly.resetAt - weekly.lengthMs;
+  if (workingMs(start, weekly.resetAt, week) <= drainMs) return start;
+  let closed = start;
+  let open = weekly.resetAt;
+  for (let step = 0; step < 48; step += 1) {
+    const middle = Math.round((closed + open) / 2);
+    if (workingMs(middle, weekly.resetAt, week) > drainMs) closed = middle;
+    else open = middle;
+  }
+  return open;
+}
+
 export function weeklyUtilization(
   quota: AccountQuota,
   now: number,
