@@ -178,17 +178,28 @@ function relative(timestamp: number, now = Date.now()): string {
   const hours = Math.round(minutes / 60);
   return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
 }
-function windowShortLabel(window: LimitWindow): string {
-  if (window.windowMinutes === null)
+function windowShortLabel(
+  window: LimitWindow,
+  provider: PoolProvider = "codex",
+): string {
+  if (window.windowMinutes === null) {
+    if (provider === "codex") return window.slot === "primary" ? "5H" : "7D";
     return window.slot === "primary" ? "LIMIT" : "LIMIT 2";
+  }
   if (window.windowMinutes % 1_440 === 0)
     return `${window.windowMinutes / 1_440}D`;
   if (window.windowMinutes % 60 === 0) return `${window.windowMinutes / 60}H`;
   return `${window.windowMinutes}M`;
 }
-function windowLongLabel(window: LimitWindow): string {
-  if (window.windowMinutes === null)
+function windowLongLabel(
+  window: LimitWindow,
+  provider: PoolProvider = "codex",
+): string {
+  if (window.windowMinutes === null) {
+    if (provider === "codex")
+      return window.slot === "primary" ? "5 hour" : "Weekly";
     return window.slot === "primary" ? "Usage limit" : "Secondary limit";
+  }
   if (window.windowMinutes === 7 * 24 * 60) return "Weekly";
   if (window.windowMinutes % 1_440 === 0)
     return `${window.windowMinutes / 1_440} day`;
@@ -224,6 +235,23 @@ function writeCachedStatus(status: PoolStatus): void {
   }
 }
 
+function weeklyResetAt(account: AccountSummary): number | null {
+  if (account.provider === "claude") return account.sevenDayResetAt;
+  return longestCodexWindow(account)?.resetAt ?? null;
+}
+
+function longestCodexWindow(account: AccountSummary): LimitWindow | null {
+  let longest: LimitWindow | null = null;
+  for (const window of account.limitWindows) {
+    if (
+      longest === null ||
+      (window.windowMinutes ?? 0) > (longest.windowMinutes ?? 0)
+    )
+      longest = window;
+  }
+  return longest;
+}
+
 function statusPresentation(
   account: AccountSummary,
   threshold: number,
@@ -231,6 +259,19 @@ function statusPresentation(
   label: string;
   dot: string;
 } {
+  if (account.status === "ready" && account.capReached) {
+    const resetAt = weeklyResetAt(account);
+    return {
+      label: `Capped${resetAt === null ? "" : ` · ${resetLabel(resetAt)}`}`,
+      dot: "bg-warning",
+    };
+  }
+  if (account.status === "ready" && !account.eligible)
+    return {
+      label:
+        account.role === "reserve" ? "Reserve · standby" : "Not selected now",
+      dot: "bg-muted-foreground",
+    };
   if (account.status === "held")
     return {
       label: `Held${account.heldUntil === null ? "" : ` · retry at ${new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(account.heldUntil)}`}`,
@@ -300,19 +341,32 @@ type QuotaSlot = {
   label: string;
   utilization: number | null;
   status: string | null;
+  limit: number;
 };
 
-function quotaSlots(account: AccountSummary): QuotaSlot[] {
+function quotaSlots(account: AccountSummary, threshold: number): QuotaSlot[] {
+  const weeklyLimit = Math.min(threshold, account.capLimit ?? threshold);
   if (account.provider === "codex") {
     if (account.limitWindows.length === 0)
       return [
-        { key: "primary", label: "LIMIT", utilization: null, status: null },
+        {
+          key: "primary",
+          label: "5H",
+          utilization: null,
+          status: null,
+          limit: threshold,
+        },
       ];
     return account.limitWindows.map((window) => ({
       key: window.slot,
-      label: windowShortLabel(window),
+      label: windowShortLabel(window, account.provider),
       utilization: window.utilization,
       status: window.status,
+      limit:
+        (window.windowMinutes ?? (window.slot === "primary" ? 300 : 10_080)) >=
+        1_440
+          ? weeklyLimit
+          : threshold,
     }));
   }
   return [
@@ -321,29 +375,32 @@ function quotaSlots(account: AccountSummary): QuotaSlot[] {
       label: "5H",
       utilization: account.fiveHourUtilization,
       status: account.fiveHourStatus,
+      limit: threshold,
     },
     {
       key: "seven-day",
       label: "7D",
       utilization: account.sevenDayUtilization,
       status: account.sevenDayStatus,
+      limit: weeklyLimit,
     },
     {
       key: "fable",
       label: "FABLE",
       utilization: account.familyWeekly.fable?.utilization ?? null,
       status: account.familyWeekly.fable?.status ?? null,
+      limit: weeklyLimit,
     },
   ];
 }
 
-function quotaToneClass(slot: QuotaSlot, threshold: number): string {
+function quotaToneClass(slot: QuotaSlot): string {
   if (
     slot.status?.toLowerCase() === "rejected" ||
-    (slot.utilization !== null && slot.utilization >= 1)
+    (slot.utilization !== null && slot.utilization >= slot.limit)
   )
     return "text-destructive-text";
-  if (slot.utilization !== null && slot.utilization >= threshold - 0.1)
+  if (slot.utilization !== null && slot.utilization >= slot.limit - 0.1)
     return "text-warning-text";
   return slot.utilization === null
     ? "text-subtle-foreground/75"
@@ -369,9 +426,7 @@ function QuotaValue({
       <div className="text-2xs uppercase tracking-wide text-subtle-foreground/75">
         {slot.label}
       </div>
-      <div
-        className={cn("text-xs font-semibold", quotaToneClass(slot, threshold))}
-      >
+      <div className={cn("text-xs font-semibold", quotaToneClass(slot))}>
         {percent(slot.utilization)}
       </div>
     </div>
@@ -422,7 +477,7 @@ function AccountRow({
 }) {
   const cap = capText(account);
   const status = statusPresentation(account, threshold);
-  const slots = quotaSlots(account);
+  const slots = quotaSlots(account, threshold);
   const email = secondaryEmail(account);
   const {
     attributes,
@@ -1294,6 +1349,19 @@ function AccountPoolSettings() {
             </span>
           ))}
         </p>
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-subtle-foreground/75">
+          {[
+            { dot: "bg-success", label: "taking traffic" },
+            { dot: "bg-warning", label: "near its limit or capped" },
+            { dot: "bg-destructive", label: "blocked until reset" },
+            { dot: "bg-muted-foreground", label: "standby, disabled, or no data" },
+          ].map((entry) => (
+            <span key={entry.label} className="inline-flex items-center gap-1.5">
+              <span className={cn("size-1.5 rounded-full", entry.dot)} />
+              {entry.label}
+            </span>
+          ))}
+        </p>
         {error === null ? null : (
           <div
             role="alert"
@@ -2021,7 +2089,7 @@ function AccountDialog({
             account.limitWindows.map((window) => (
               <QuotaDetail
                 key={window.slot}
-                label={windowLongLabel(window)}
+                label={windowLongLabel(window, account.provider)}
                 quota={window}
                 threshold={threshold}
                 skipAt={

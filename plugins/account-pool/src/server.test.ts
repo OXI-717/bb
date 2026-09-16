@@ -5764,6 +5764,12 @@ describe("sequential pool recovery", () => {
     expect(
       pool.accounts.find((account) => account.id === personal.id)?.capLimit,
     ).toBe(0.2);
+    expect(
+      pool.accounts.find((account) => account.id === fixture.account.id),
+    ).toMatchObject({ eligible: true, capReached: false });
+    expect(
+      pool.accounts.find((account) => account.id === personal.id),
+    ).toMatchObject({ eligible: false, capReached: false });
     const listed = z
       .array(accountSummarySchema)
       .parse(await fixture.host.harness.behavior.callRpc("account.list", null));

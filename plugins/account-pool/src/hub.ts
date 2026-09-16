@@ -20,7 +20,12 @@ import type {
   ImportedClaudeCredentials,
   ImportedCodexCredentials,
 } from "./credentials.js";
-import { capLimit, gateMembership, rankByBalance } from "./balancer.js";
+import {
+  capLimit,
+  gateMembership,
+  rankByBalance,
+  weeklyUtilization,
+} from "./balancer.js";
 import {
   accountStatus,
   blockingResetAt,
@@ -346,6 +351,25 @@ export class AccountPoolHub {
       restDays: settings.restDays,
       offsetMinutes: -new Date(now).getTimezoneOffset(),
     };
+    const drainMs = settings.reserveDrainHours * 60 * 60 * 1_000;
+    const eligibleIds = new Set<string>();
+    for (const provider of ["claude", "codex"] as const) {
+      const entries = accounts
+        .filter(
+          (account) => account.provider === provider && account.enabled,
+        )
+        .map((account) => ({
+          account,
+          quota: this.options.quotas.get(account.id),
+        }))
+        .filter(({ quota }) => quota.error === null)
+        .filter(
+          ({ quota }) =>
+            !isSharedQuotaExhausted(quota, settings.switchThreshold, now),
+        );
+      for (const entry of gateMembership(entries, now, drainMs, workWeek))
+        eligibleIds.add(entry.account.id);
+    }
     return {
       route: this.options.route,
       enabledAccountCount: accounts.filter((account) => account.enabled).length,
@@ -359,12 +383,16 @@ export class AccountPoolHub {
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
         const { accountId: _accountId, ...quotaFields } = quota;
+        const limit = capLimit(account, quota, now, workWeek);
         return {
           ...account,
           lastUsedHostName: null,
           ...quotaFields,
           inFlight: this.inFlightByAccount.get(account.id) ?? 0,
-          capLimit: capLimit(account, quota, now, workWeek),
+          capLimit: limit,
+          eligible: eligibleIds.has(account.id),
+          capReached:
+            limit !== null && (weeklyUtilization(quota, now) ?? 0) >= limit,
           status: accountStatus(account, quota, settings.switchThreshold, now),
         };
       }),

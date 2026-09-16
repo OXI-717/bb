@@ -84,6 +84,8 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     error: null,
     inFlight: 0,
     capLimit: null,
+    eligible: true,
+    capReached: false,
     status: "ready",
     ...overrides,
   };
@@ -555,6 +557,62 @@ describe("Account Pool settings", () => {
         input: { restDays: [5, 6] },
       }),
     );
+  });
+
+  it("separates a capped account from a reserve account on standby", async () => {
+    const capped = account({
+      role: "reserve",
+      cap: { early: 0.15, late: 0.98 },
+      capLimit: 0.2,
+      capReached: true,
+      eligible: false,
+      sevenDayUtilization: 0.5,
+      sevenDayResetAt: Date.now() + 2 * 24 * 60 * 60 * 1_000,
+    });
+    const standby = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "standby@example.com",
+      email: "standby@example.com",
+      role: "reserve",
+      capLimit: 0.6,
+      eligible: false,
+    });
+    const slot = render([capped, standby]);
+    expect(
+      await slot.findByText((text) => text.startsWith("Capped · ")),
+    ).toBeTruthy();
+    expect(slot.getByText("Reserve · standby")).toBeTruthy();
+    expect(slot.getByText("50%").className).toContain("text-destructive-text");
+  });
+
+  it("names a Codex window without a reported length by its slot", async () => {
+    const codex = account({
+      provider: "codex",
+      kind: "oauth",
+      label: "codex@example.com",
+      email: "codex@example.com",
+      subscriptionType: "pro",
+      fiveHourUtilization: null,
+      limitWindows: [
+        {
+          slot: "secondary",
+          windowMinutes: null,
+          utilization: 0.12,
+          resetAt: null,
+          status: null,
+          observedAt: 1,
+          source: "header",
+        },
+      ],
+    });
+    const slot = render([codex]);
+    expect(await slot.findByText("7D")).toBeTruthy();
+    expect(slot.queryByText("LIMIT 2")).toBeNull();
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Open codex@example.com" }),
+    );
+    expect(await slot.findByText("Weekly")).toBeTruthy();
+    expect(slot.queryByText("Secondary limit")).toBeNull();
   });
 
   it("explains the role, the weekly cap, and the effective skip limit in the detail dialog", async () => {
