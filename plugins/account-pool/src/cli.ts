@@ -41,6 +41,7 @@ const HELP = [
   "  bb pool account login-poll --session <id>",
   "  printf '%s\\n' \"$CLAUDE_AUTH_CODE\" | bb pool account login-complete --session <id> --code-stdin",
   "  bb pool account add --provider claude --api-key-stdin [--label <text>] [--priority <n>]",
+  "  bb pool account add --provider kimi --api-key-stdin [--label <text>] [--priority <n>]",
   "  bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]  Unsafe: exposes the key in process arguments.",
   "  bb pool account list [--json]",
   "  bb pool account remove <id>",
@@ -50,12 +51,12 @@ const HELP = [
   "  bb pool account role <id> <primary|reserve>",
   "  bb pool account cap <id> <early> <late>",
   "  bb pool account cap <id> off",
-  "  bb pool account reorder <claude|codex> <id>...",
+  "  bb pool account reorder <claude|codex|kimi> <id>...",
   "  bb pool account refresh <id>",
   "  bb pool status [--json]",
-  "  bb pool routing <claude|codex> [--off]",
+  "  bb pool routing <claude|codex|kimi> [--off]",
   "  bb pool config",
-  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
+  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|kimiUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
   "  bb pool token rotate --machine <id-or-name>",
   "  bb pool bypass <thread-id> [--off]",
   "",
@@ -215,6 +216,7 @@ function formatConfig(config: AccountPoolConfig): string {
   return [
     `anthropicUpstreamBaseUrl: ${config.anthropicUpstreamBaseUrl}`,
     `codexUpstreamBaseUrl: ${config.codexUpstreamBaseUrl}`,
+    `kimiUpstreamBaseUrl: ${config.kimiUpstreamBaseUrl}`,
     `switchThreshold: ${config.switchThreshold}`,
     `routingStrategy: ${config.routingStrategy}`,
     `reserveDrainHours: ${config.reserveDrainHours}`,
@@ -243,6 +245,11 @@ function parseConfigUpdate(
       codexUpstreamBaseUrl: value,
     });
   }
+  if (key === "kimiUpstreamBaseUrl") {
+    return accountPoolConfigSetInputSchema.parse({
+      kimiUpstreamBaseUrl: value,
+    });
+  }
   if (key === "switchThreshold") {
     return accountPoolConfigSetInputSchema.parse({
       switchThreshold: Number(value),
@@ -265,7 +272,7 @@ function parseConfigUpdate(
     });
   }
   throw new Error(
-    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, routingStrategy, reserveDrainHours, or restDays.",
+    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, kimiUpstreamBaseUrl, switchThreshold, routingStrategy, reserveDrainHours, or restDays.",
   );
 }
 
@@ -290,7 +297,7 @@ export function registerPoolCli(
         summary:
           "Sign in to Claude or Codex, import credentials, or add an Anthropic API key",
         usage:
-          "bb pool account add --provider <claude|codex> --login\nbb pool account add --provider <claude|codex> --import [--label <text>] [--priority <n>]\nbb pool account add --provider claude --api-key-stdin [--label <text>] [--priority <n>]\nUnsafe compatibility form: bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]",
+          "bb pool account add --provider <claude|codex> --login\nbb pool account add --provider <claude|codex> --import [--label <text>] [--priority <n>]\nbb pool account add --provider <claude|kimi> --api-key-stdin [--label <text>] [--priority <n>]\nUnsafe compatibility form: bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]",
       },
       {
         name: "account-login-poll",
@@ -331,7 +338,7 @@ export function registerPoolCli(
       {
         name: "account-reorder",
         summary: "Set the complete failover order for one provider",
-        usage: "bb pool account reorder <claude|codex> <id>...",
+        usage: "bb pool account reorder <claude|codex|kimi> <id>...",
       },
       {
         name: "account-refresh",
@@ -346,7 +353,7 @@ export function registerPoolCli(
       {
         name: "routing",
         summary: "Enable or disable pooled routing for one provider",
-        usage: "bb pool routing <claude|codex> [--off]",
+        usage: "bb pool routing <claude|codex|kimi> [--off]",
       },
       {
         name: "config",
@@ -357,7 +364,7 @@ export function registerPoolCli(
         name: "config-set",
         summary: "Update one Account Pooler routing configuration value",
         usage:
-          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
+          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|kimiUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
       },
       {
         name: "token-rotate",
@@ -507,8 +514,14 @@ export function registerPoolCli(
               "--api-key-stdin must be invoked through the bb CLI so it can read stdin safely.",
             );
           }
-          if (!imported && flags.values.get("provider") !== "claude") {
-            throw new Error("Anthropic API keys require --provider claude.");
+          if (
+            !imported &&
+            flags.values.get("provider") !== "claude" &&
+            flags.values.get("provider") !== "kimi"
+          ) {
+            throw new Error(
+              "API keys require --provider claude or --provider kimi.",
+            );
           }
           const priorityText = flags.values.get("priority") ?? "100";
           const input = accountAddInputSchema.parse({

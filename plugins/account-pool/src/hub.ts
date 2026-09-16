@@ -7,12 +7,14 @@ import type {
   PoolProvider,
   PoolStatus,
 } from "./contracts.js";
+import { providerSchema } from "./contracts.js";
 import { createClaudeAdapter } from "./claude-adapter.js";
 import {
   createCodexAdapter,
   DEFAULT_CODEX_REFRESH_URL,
   DEFAULT_CODEX_USAGE_URL,
 } from "./codex-adapter.js";
+import { createKimiAdapter } from "./kimi-adapter.js";
 import type { ProviderAdapter } from "./provider-adapter.js";
 import type { ImportedProviderAccount } from "./provider-adapter.js";
 import { TransientOAuthRefreshError } from "./provider-adapter.js";
@@ -164,10 +166,15 @@ export class AccountPoolHub {
     await this.stop();
   }
 
-  async authenticate(request: Request): Promise<string | null> {
+  async authenticate(
+    request: Request,
+    adapter?: ProviderAdapter,
+  ): Promise<string | null> {
     const token =
       request.headers.get("x-bb-account-pool-token") ??
-      readBearer(request.headers.get("authorization"));
+      readBearer(request.headers.get("authorization")) ??
+      adapter?.inboundToken?.(request.headers) ??
+      null;
     return this.options.hubTokens.authenticate(token);
   }
 
@@ -179,7 +186,7 @@ export class AccountPoolHub {
 
   async handle(request: Request, provider: PoolProvider): Promise<Response> {
     const adapter = this.adapter(provider);
-    const hostId = await this.authenticate(request);
+    const hostId = await this.authenticate(request, adapter);
     if (hostId === null) {
       return adapter.errorResponse(401, "Invalid Account Pooler bearer token.");
     }
@@ -275,7 +282,7 @@ export class AccountPoolHub {
     };
     const drainMs = settings.reserveDrainHours * 60 * 60 * 1_000;
     const eligibleIds = new Set<string>();
-    for (const provider of ["claude", "codex"] as const) {
+    for (const provider of providerSchema.options) {
       const entries = accounts
         .filter(
           (account) => account.provider === provider && account.enabled,
@@ -301,6 +308,7 @@ export class AccountPoolHub {
       activeAccounts: {
         claude: this.activeAccounts.get("claude")?.accountId ?? null,
         codex: this.activeAccounts.get("codex")?.accountId ?? null,
+        kimi: this.activeAccounts.get("kimi")?.accountId ?? null,
       },
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
@@ -1239,6 +1247,7 @@ export function createHub(options: {
         importCredentials: options.importCodexCredentials,
       }),
     ],
+    ["kimi", createKimiAdapter()],
   ]);
   return new AccountPoolHub({
     route: options.route,

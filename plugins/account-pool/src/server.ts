@@ -16,6 +16,7 @@ import type {
   ImportedCodexCredentials,
 } from "./credentials.js";
 import { createHub } from "./hub.js";
+import { KIMI_MOUNT_PREFIX } from "./kimi-adapter.js";
 import { PoolOperations } from "./operations.js";
 import { accountPoolRpcContract, createRpcHandlers } from "./rpc.js";
 import { ClaudeOAuthLogin } from "./oauth-login.js";
@@ -237,6 +238,38 @@ export function createAccountPoolPlugin(
     bb.providers.experimental_contributeEnvHealth("codex", () =>
       proxiedHealth("codex"),
     );
+    for (const providerId of [
+      "acp-opencode-kimi",
+      "acp-opencode-kimi-highspeed",
+    ]) {
+      bb.providers.experimental_contributeEnv(providerId, async (context) => {
+        if (
+          !(await operations.isRoutingEnabled("kimi")) ||
+          (await routing.isBypassed(context.threadId)) ||
+          !(await operations.hasUsableEnabledAccount("kimi"))
+        ) {
+          return [];
+        }
+        const token = await hubTokens.forHost(context.hostId);
+        return [
+          {
+            name: "OXI_KIMI_BASE_URL",
+            value: {
+              serverPath: `${hubBasePath(bb.pluginId)}/${KIMI_MOUNT_PREFIX}v1`,
+            },
+            reason: "Routed through the Account Pooler hub",
+          },
+          {
+            name: "KIMI_API_KEY",
+            value: token,
+            reason: "Account Pooler hub token for this machine",
+          },
+        ];
+      });
+      bb.providers.experimental_contributeEnvHealth(providerId, () =>
+        proxiedHealth("kimi"),
+      );
+    }
     bb.onDispose(async () => {
       codexLogin.dispose();
       let timer: ReturnType<typeof setTimeout> | null = null;
@@ -296,6 +329,17 @@ export function createAccountPoolPlugin(
       (context) => hub.handle(context.req.raw, "codex"),
       { auth: "none" },
     );
+    for (const route of [
+      `/${KIMI_MOUNT_PREFIX}v1/messages`,
+      `/${KIMI_MOUNT_PREFIX}v1/messages/count_tokens`,
+    ]) {
+      bb.http.route(
+        "POST",
+        route,
+        (context) => hub.handle(context.req.raw, "kimi"),
+        { auth: "none" },
+      );
+    }
     bb.http.route("HEAD", "/api/hello", () => helloResponse(), {
       auth: "none",
     });

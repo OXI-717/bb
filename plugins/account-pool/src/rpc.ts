@@ -19,6 +19,7 @@ import {
   hubTokenSummarySchema,
   loginCompleteInputSchema,
   loginStartSchema,
+  providerSchema,
   routedThreadStatusListSchema,
   statusSchema,
   tokenRotateInputSchema,
@@ -73,7 +74,7 @@ export const accountPoolRpcContract = defineRpcContract({
   "routing.set": {
     input: routingSetInputSchema,
     output: z
-      .object({ provider: z.enum(["claude", "codex"]), enabled: z.boolean() })
+      .object({ provider: providerSchema, enabled: z.boolean() })
       .strict(),
   },
   "config.get": {

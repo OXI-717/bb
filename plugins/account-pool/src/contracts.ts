@@ -3,6 +3,7 @@ import { z } from "zod";
 export const DEFAULT_ACCOUNT_POOL_CONFIG = {
   anthropicUpstreamBaseUrl: "https://api.anthropic.com",
   codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
+  kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
   switchThreshold: 0.98,
   routingStrategy: "sequential" as const,
   reserveDrainHours: 24,
@@ -58,6 +59,9 @@ export const accountPoolConfigSchema = z
     codexUpstreamBaseUrl: httpUrlSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.codexUpstreamBaseUrl,
     ),
+    kimiUpstreamBaseUrl: httpUrlSchema.default(
+      DEFAULT_ACCOUNT_POOL_CONFIG.kimiUpstreamBaseUrl,
+    ),
     switchThreshold: switchThresholdSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.switchThreshold,
     ),
@@ -77,6 +81,7 @@ export const accountPoolConfigSetInputSchema = z
   .object({
     anthropicUpstreamBaseUrl: httpUrlSchema.optional(),
     codexUpstreamBaseUrl: httpUrlSchema.optional(),
+    kimiUpstreamBaseUrl: httpUrlSchema.optional(),
     switchThreshold: switchThresholdSchema.optional(),
     routingStrategy: routingStrategySchema.optional(),
     reserveDrainHours: reserveDrainHoursSchema.optional(),
@@ -93,7 +98,7 @@ export interface AccountPoolConfigController {
   set: (input: AccountPoolConfigSetInput) => Promise<AccountPoolConfig>;
 }
 
-export const providerSchema = z.enum(["claude", "codex"]);
+export const providerSchema = z.enum(["claude", "codex", "kimi"]);
 export type PoolProvider = z.infer<typeof providerSchema>;
 export const accountKindSchema = z.enum(["oauth", "api-key"]);
 export const modelFamilySchema = z.enum([
@@ -271,9 +276,16 @@ export const statusSchema = z
       .object({
         claude: z.string().uuid().nullable(),
         codex: z.string().uuid().nullable(),
+        kimi: z.string().uuid().nullable(),
       })
       .strict(),
-    routing: z.object({ claude: z.boolean(), codex: z.boolean() }).strict(),
+    routing: z
+      .object({
+        claude: z.boolean(),
+        codex: z.boolean(),
+        kimi: z.boolean(),
+      })
+      .strict(),
   })
   .strict();
 

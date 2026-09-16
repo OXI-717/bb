@@ -53,6 +53,7 @@ export interface ImportedProviderAccount {
 export interface ProviderAdapter {
   provider: PoolProvider;
   upstreamName: string;
+  inboundToken?(headers: Headers): string | null;
   importAccount(): Promise<ImportedProviderAccount>;
   parseRequest(
     body: Uint8Array,

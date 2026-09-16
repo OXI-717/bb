@@ -50,14 +50,18 @@ export class PoolOperations {
 
   async add(input: AccountAddInput): Promise<Account> {
     if (input.source.kind === "api-key") {
-      if (input.provider !== "claude") {
+      if (input.provider === "codex") {
         throw new Error("Codex accounts can only be added with --import.");
       }
       const account = await this.accounts.add(
         {
           provider: input.provider,
           kind: "api-key",
-          label: input.label ?? "Claude API key",
+          label:
+            input.label ??
+            (input.provider === "kimi"
+              ? "Kimi For Coding API key"
+              : "Claude API key"),
           email: null,
           accountUuid: null,
           subscriptionType: null,
@@ -70,6 +74,11 @@ export class PoolOperations {
       this.onAccountsChanged();
       await this.onAccountEnabled(account.id);
       return account;
+    }
+    if (input.provider === "kimi") {
+      throw new Error(
+        "Kimi For Coding accounts can only be added with --api-key-stdin.",
+      );
     }
     const imported = await this.hub.importAccount(input.provider);
     const account = await this.accounts.add(
@@ -228,9 +237,10 @@ export class PoolOperations {
     await this.hubTokens.prune(hosts.map((host) => host.id));
     const status = await this.hub.status();
     const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
-    const [claude, codex] = await Promise.all([
+    const [claude, codex, kimi] = await Promise.all([
       this.routing.isProviderEnabled("claude"),
       this.routing.isProviderEnabled("codex"),
+      this.routing.isProviderEnabled("kimi"),
     ]);
     return {
       ...status,
@@ -245,7 +255,7 @@ export class PoolOperations {
             ? null
             : (hostNames.get(account.lastUsedHostId) ?? null),
       })),
-      routing: { claude, codex },
+      routing: { claude, codex, kimi },
     };
   }
 

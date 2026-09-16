@@ -94,7 +94,11 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
 
 function status(
   accounts: AccountSummary[] = [account()],
-  activeAccounts: PoolStatus["activeAccounts"] = { claude: null, codex: null },
+  activeAccounts: PoolStatus["activeAccounts"] = {
+    claude: null,
+    codex: null,
+    kimi: null,
+  },
 ): PoolStatus {
   return {
     route: "/api/v1/plugins/account-pool/http",
@@ -106,7 +110,7 @@ function status(
     ],
     accounts,
     activeAccounts,
-    routing: { claude: true, codex: true },
+    routing: { claude: true, codex: true, kimi: true },
   };
 }
 
@@ -114,6 +118,7 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
   return {
     anthropicUpstreamBaseUrl: "https://api.anthropic.com",
     codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
+    kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
     switchThreshold: 0.98,
     routingStrategy: "sequential",
     reserveDrainHours: 24,
@@ -168,7 +173,7 @@ describe("Account Pool settings", () => {
     window.localStorage.setItem(STATUS_CACHE_KEY, '{"accounts":"nope"}');
     const live = deferred<PoolStatus>();
     const slot = render([], { "status.get": () => live.promise });
-    expect(slot.getAllByText("Загрузка…")).toHaveLength(2);
+    expect(slot.getAllByText("Загрузка…")).toHaveLength(3);
     live.resolve(status());
     expect(await slot.findByText("person@example.com")).toBeTruthy();
   });
@@ -392,7 +397,11 @@ describe("Account Pool settings", () => {
     });
     const slot = render([account(), work], {
       "status.get": () =>
-        status([account(), work], { claude: account().id, codex: null }),
+        status([account(), work], {
+          claude: account().id,
+          codex: null,
+          kimi: null,
+        }),
     });
     expect(
       await slot.findByText("Сейчас Claude: person@example.com"),

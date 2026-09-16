@@ -115,6 +115,27 @@ async function resolveCodexToken(
   return { token: token.value, baseUrl: baseUrl.value.serverPath };
 }
 
+async function resolveKimiEnv(
+  host: ReturnType<typeof createFakePluginHost>,
+  providerId = "acp-opencode-kimi",
+  hostId = "host-one",
+): Promise<{ token: string; baseUrl: string }> {
+  const entries = await host.harness.behavior.resolveProviderEnv(providerId, {
+    threadId: "thread-kimi",
+    projectId: "project-one",
+    hostId,
+  });
+  const token = entries.find((entry) => entry.name === "KIMI_API_KEY");
+  const baseUrl = entries.find((entry) => entry.name === "OXI_KIMI_BASE_URL");
+  if (token === undefined || typeof token.value !== "string") {
+    throw new Error("Kimi Account Pool token was not resolved.");
+  }
+  if (baseUrl === undefined || typeof baseUrl.value !== "object") {
+    throw new Error("Kimi Account Pool base URL was not resolved.");
+  }
+  return { token: token.value, baseUrl: baseUrl.value.serverPath };
+}
+
 afterEach(async () => {
   while (cleanups.length > 0) await cleanups.pop()?.();
 });
@@ -182,7 +203,7 @@ function testJwt(payload: object): string {
 async function createFixture(args: {
   upstreamUrl: string;
   options?: AccountPoolPluginOptions;
-  provider?: "claude" | "codex";
+  provider?: "claude" | "codex" | "kimi";
   source?: "api-key" | "import";
   apiKey?: string;
   priority?: number;
@@ -197,6 +218,7 @@ async function createFixture(args: {
   await host.bb.storage.kv.set("config", {
     anthropicUpstreamBaseUrl: args.upstreamUrl,
     codexUpstreamBaseUrl: args.upstreamUrl,
+    kimiUpstreamBaseUrl: args.upstreamUrl,
   });
   const plugin = createAccountPoolPlugin({
     usageUrl: "data:application/json,{}",
@@ -238,7 +260,9 @@ async function createFixture(args: {
   const key =
     args.provider === "codex"
       ? (await resolveCodexToken(host)).token
-      : await resolveToken(host);
+      : args.provider === "kimi"
+        ? (await resolveKimiEnv(host)).token
+        : await resolveToken(host);
   return { dataDir, host, service, key, account };
 }
 
@@ -345,6 +369,7 @@ describe("Account Pool config schema", () => {
     expect(accountPoolConfigSchema.parse({})).toEqual({
       anthropicUpstreamBaseUrl: "https://api.anthropic.com",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
+      kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
       switchThreshold: 0.98,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -412,6 +437,7 @@ describe("Account Pool plugin", () => {
     expect(updated).toEqual({
       anthropicUpstreamBaseUrl: "http://127.0.0.1:9000",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
+      kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
       switchThreshold: 0.75,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -490,6 +516,56 @@ describe("Account Pool plugin", () => {
         "chatgpt-account",
       );
       expect(requests[0]?.headers.has("x-bb-account-pool-token")).toBe(false);
+      expect(await requests[0]?.text()).toBe(body);
+    },
+  );
+
+  it.each(["acp-opencode-kimi", "acp-opencode-kimi-highspeed"])(
+    "routes %s through the hub with a machine token instead of the subscription key",
+    async (providerId) => {
+      const requests: Request[] = [];
+      const fixture = await createFixture({
+        upstreamUrl: "https://upstream.example",
+        provider: "kimi",
+        source: "api-key",
+        apiKey: "sk-kimi-subscription",
+        options: {
+          fetch: async (input, init) => {
+            requests.push(new Request(input, init));
+            return Response.json({ id: "message-one" });
+          },
+        },
+      });
+      const env = await resolveKimiEnv(fixture.host, providerId);
+      expect(env.baseUrl).toBe("/api/v1/plugins/account-pool/http/kimi/v1");
+      expect(env.token).not.toBe("sk-kimi-subscription");
+      const body = JSON.stringify({ model: "k3-256k", messages: [] });
+      const denied = await fixture.host.harness.behavior.fetchHttp(
+        "POST",
+        "/kimi/v1/messages",
+        { body },
+      );
+      expect(denied.status).toBe(401);
+      expect(requests).toHaveLength(0);
+      const response = await fixture.host.harness.behavior.fetchHttp(
+        "POST",
+        "/kimi/v1/messages",
+        {
+          headers: {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+            "x-api-key": env.token,
+          },
+          body,
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ id: "message-one" });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe("https://upstream.example/messages");
+      expect(requests[0]?.headers.get("x-api-key")).toBe(
+        "sk-kimi-subscription",
+      );
       expect(await requests[0]?.text()).toBe(body);
     },
   );
@@ -5301,7 +5377,7 @@ describe("Account Pool plugin", () => {
     const result = statusSchema.parse(
       await fixture.host.harness.behavior.callRpc("status.get", null),
     );
-    expect(result.routing).toEqual({ claude: false, codex: true });
+    expect(result.routing).toEqual({ claude: false, codex: true, kimi: true });
   });
 
   it("records the selected account's last-use time and host", async () => {
@@ -5709,6 +5785,7 @@ describe("sequential pool recovery", () => {
     expect(pool.activeAccounts).toEqual({
       claude: fixture.account.id,
       codex: null,
+      kimi: null,
     });
     expect(
       pool.accounts.find((account) => account.id === fixture.account.id)

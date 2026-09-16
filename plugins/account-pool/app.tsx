@@ -108,6 +108,12 @@ const PROVIDERS: Array<{
     title: "Codex",
     description: "Треды Codex идут через эти аккаунты ChatGPT.",
   },
+  {
+    id: "kimi",
+    title: "Kimi For Coding",
+    description:
+      "Треды opencode с подпиской Kimi идут через эти ключи: на машине остаётся только токен хаба.",
+  },
 ];
 const FAMILY_LABELS: Record<ModelFamily, string> = {
   fable: "Fable, неделя",
@@ -136,6 +142,7 @@ function configDrafts(config: AccountPoolConfig): Record<ConfigField, string> {
   return {
     anthropicUpstreamBaseUrl: config.anthropicUpstreamBaseUrl,
     codexUpstreamBaseUrl: config.codexUpstreamBaseUrl,
+    kimiUpstreamBaseUrl: config.kimiUpstreamBaseUrl,
     switchThreshold: String(config.switchThreshold),
   };
 }
@@ -958,6 +965,7 @@ function AccountPoolSettings() {
   const [drafts, setDrafts] = useState<Record<ConfigField, string>>({
     anthropicUpstreamBaseUrl: "",
     codexUpstreamBaseUrl: "",
+    kimiUpstreamBaseUrl: "",
     switchThreshold: "",
   });
   const [configErrors, setConfigErrors] = useState<
@@ -965,6 +973,7 @@ function AccountPoolSettings() {
   >({
     anthropicUpstreamBaseUrl: null,
     codexUpstreamBaseUrl: null,
+    kimiUpstreamBaseUrl: null,
     switchThreshold: null,
   });
   const [dialog, setDialog] = useState<DialogState>(null);
