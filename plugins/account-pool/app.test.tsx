@@ -557,6 +557,30 @@ describe("Account Pool settings", () => {
     );
   });
 
+  it("explains the role, the weekly cap, and the effective skip limit in the detail dialog", async () => {
+    const work = account({
+      role: "reserve",
+      cap: { early: 0.15, late: 0.98 },
+      capLimit: 0.45,
+      sevenDayUtilization: 0.5,
+      sevenDayResetAt: Date.now() + 3 * 24 * 60 * 60 * 1_000,
+    });
+    const slot = render([work]);
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Open person@example.com" }),
+    );
+    expect(await slot.findAllByText("Reserve")).toHaveLength(2);
+    expect(slot.getByText("15% → 98% · 45% now")).toBeTruthy();
+    expect(
+      slot.getByText(
+        "Used only when no primary account is eligible, or within 24 working hours of its weekly reset.",
+      ),
+    ).toBeTruthy();
+    expect(
+      slot.getByText((text) => text.includes("will be skipped at 45%")),
+    ).toBeTruthy();
+  });
+
   it("shows every observed family bucket in the detail dialog", async () => {
     const fable = {
       utilization: 0.91,
