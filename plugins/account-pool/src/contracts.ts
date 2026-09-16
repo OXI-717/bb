@@ -228,6 +228,8 @@ export const accountSummarySchema = accountSchema.extend({
   ...quotaFieldsShape,
   inFlight: z.number().int().nonnegative(),
   capLimit: z.number().nullable(),
+  eligible: z.boolean(),
+  capReached: z.boolean(),
   status: z.enum(["disabled", "ready", "held", "exhausted", "error"]),
 });
 

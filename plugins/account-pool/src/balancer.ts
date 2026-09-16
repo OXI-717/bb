@@ -195,6 +195,13 @@ function effectiveCap(account: PoolMembership): ProgressiveCap | null {
   );
 }
 
+export function weeklyUtilization(
+  quota: AccountQuota,
+  now: number,
+): number | null {
+  return weeklyWindow(quotaWindows(quota, now))?.utilization ?? null;
+}
+
 export function capLimit(
   account: PoolMembership,
   quota: AccountQuota,
