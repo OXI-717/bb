@@ -593,14 +593,16 @@ describe("Account Pool settings", () => {
     const slot = render([account(), later, soon]);
     expect(await slot.findByText("Drain windows")).toBeTruthy();
     expect(slot.getByText("open now")).toBeTruthy();
-    const rows = slot
-      .getAllByRole("row")
-      .map((row) => row.textContent ?? "")
-      .filter((text) => text.includes("@example.com"));
+    const table = slot.getByLabelText("Claude drain windows");
+    expect(slot.queryByLabelText("Codex drain windows")).toBeNull();
+    const rows = Array.from(table.querySelectorAll("tbody tr")).map(
+      (row) => row.textContent ?? "",
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("work-soon@example.com");
     expect(rows[1]).toContain("work-later@example.com");
     expect(rows[1]).toContain("30%");
+    expect(rows[1]).toMatch(/\d{2}\.\d{2} \d{2}:\d{2} \(/);
   });
 
   it("separates a capped account from a reserve account on standby", async () => {

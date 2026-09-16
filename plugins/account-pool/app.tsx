@@ -181,12 +181,25 @@ function daysOffSummary(restDays: readonly number[]): string {
   return `${names.join(", ")} do not count toward a reset.`;
 }
 
+const POOL_TIME_ZONE = "Europe/Moscow";
+
 function moment(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
+  const parts = new Intl.DateTimeFormat(undefined, {
+    timeZone: POOL_TIME_ZONE,
     weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(timestamp);
+    hour12: false,
+  }).formatToParts(timestamp);
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  return `${part("day")}.${part("month")} ${part("hour")}:${part("minute")} (${part("weekday")})`;
+}
+
+function accountFullName(account: AccountSummary): string {
+  return account.email ?? account.label;
 }
 function relative(timestamp: number, now = Date.now()): string {
   const minutes = Math.max(0, Math.round((now - timestamp) / 60_000));
@@ -1522,40 +1535,65 @@ function AccountPoolSettings() {
                   No reserve accounts yet.
                 </p>
               ) : (
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="text-subtle-foreground/75">
-                      <tr>
-                        <th className="py-1 pr-3 font-normal">Account</th>
-                        <th className="py-1 pr-3 font-normal">Opens</th>
-                        <th className="py-1 pr-3 font-normal">Weekly reset</th>
-                        <th className="py-1 font-normal">Cap now</th>
-                      </tr>
-                    </thead>
-                    <tbody className="tabular-nums">
-                      {reserveAccounts.map((account) => {
-                        const reset = weeklyResetAt(account);
-                        const opens = account.drainOpensAt;
-                        return (
-                          <tr key={account.id} className="border-t border-border">
-                            <td className="py-1 pr-3">{account.label}</td>
-                            <td className="py-1 pr-3">
-                              {opens === null
-                                ? "unknown reset"
-                                : opens <= Date.now()
-                                  ? "open now"
-                                  : moment(opens)}
-                            </td>
-                            <td className="py-1 pr-3">
-                              {reset === null ? "—" : moment(reset)}
-                            </td>
-                            <td className="py-1">{percent(account.capLimit)}</td>
+                PROVIDERS.flatMap((provider) => {
+                  const rows = reserveAccounts.filter(
+                    (account) => account.provider === provider.id,
+                  );
+                  if (rows.length === 0) return [];
+                  return [
+                    <div key={provider.id} className="mt-3 overflow-x-auto">
+                      <div className="text-xs font-medium text-foreground">
+                        {provider.title}
+                      </div>
+                      <table
+                        className="mt-1 w-full text-left text-xs"
+                        aria-label={`${provider.title} drain windows`}
+                      >
+                        <thead className="text-subtle-foreground/75">
+                          <tr>
+                            <th className="py-1 pr-3 font-normal">Account</th>
+                            <th className="py-1 pr-3 font-normal">
+                              Opens (UTC+3)
+                            </th>
+                            <th className="py-1 pr-3 font-normal">
+                              Weekly reset (UTC+3)
+                            </th>
+                            <th className="py-1 font-normal">Cap now</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        </thead>
+                        <tbody className="tabular-nums">
+                          {rows.map((account) => {
+                            const reset = weeklyResetAt(account);
+                            const opens = account.drainOpensAt;
+                            return (
+                              <tr
+                                key={account.id}
+                                className="border-t border-border"
+                              >
+                                <td className="py-1 pr-3 whitespace-nowrap">
+                                  {accountFullName(account)}
+                                </td>
+                                <td className="py-1 pr-3 whitespace-nowrap">
+                                  {opens === null
+                                    ? "unknown reset"
+                                    : opens <= Date.now()
+                                      ? "open now"
+                                      : moment(opens)}
+                                </td>
+                                <td className="py-1 pr-3 whitespace-nowrap">
+                                  {reset === null ? "—" : moment(reset)}
+                                </td>
+                                <td className="py-1">
+                                  {percent(account.capLimit)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>,
+                  ];
+                })
               )}
             </div>
             <ConfigFieldRow
