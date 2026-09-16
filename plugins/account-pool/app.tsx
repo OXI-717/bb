@@ -171,6 +171,23 @@ function parentBannerBody(parent: NonNullable<PoolStatus["parent"]>): string {
 function percent(value: number | null): string {
   return value === null ? "—" : `${Math.round(value * 100)}%`;
 }
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function daysOffSummary(restDays: readonly number[]): string {
+  if (restDays.length === 0) return "Every day counts toward a reset.";
+  const names = [...restDays]
+    .sort((left, right) => left - right)
+    .map((day) => WEEKDAY_LABELS[day] ?? String(day));
+  return `${names.join(", ")} do not count toward a reset.`;
+}
+
+function moment(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
 function relative(timestamp: number, now = Date.now()): string {
   const minutes = Math.max(0, Math.round((now - timestamp) / 60_000));
   if (minutes < 1) return "just now";
@@ -991,7 +1008,6 @@ function AccountPoolSettings() {
   const [roleDraft, setRoleDraft] = useState<AccountSummary["role"]>("primary");
   const [capDraft, setCapDraft] = useState({ early: "", late: "" });
   const [drainDraft, setDrainDraft] = useState("");
-  const [restDraft, setRestDraft] = useState("");
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
   const mounted = useRef(true);
@@ -1001,7 +1017,6 @@ function AccountPoolSettings() {
     setConfig(next);
     setDrafts(configDrafts(next));
     setDrainDraft(String(next.reserveDrainHours));
-    setRestDraft(next.restDays.join(","));
   }, []);
   const refresh = useCallback(async () => {
     try {
@@ -1210,25 +1225,6 @@ function AccountPoolSettings() {
     if (value === config.reserveDrainHours) return;
     await saveRouting({ reserveDrainHours: value });
   }
-  async function saveRestDays(): Promise<void> {
-    if (config === null) return;
-    const raw = restDraft.trim();
-    const days =
-      raw === "" || raw === "none"
-        ? []
-        : raw.split(",").map((day) => (day.trim() === "" ? NaN : Number(day)));
-    if (
-      days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) ||
-      new Set(days).size !== days.length
-    ) {
-      setRoutingError(
-        "Rest days must be unique weekday numbers from 0 (Sunday) to 6.",
-      );
-      return;
-    }
-    if (days.join(",") === config.restDays.join(",")) return;
-    await saveRouting({ restDays: days });
-  }
   async function accountAction(
     account: AccountSummary,
     action: AccountAction,
@@ -1303,6 +1299,13 @@ function AccountPoolSettings() {
   };
   const currentId = (provider: PoolProvider): string | null =>
     status?.activeAccounts[provider] ?? null;
+  const reserveAccounts = accounts
+    .filter((account) => account.role === "reserve")
+    .sort(
+      (left, right) =>
+        (left.drainOpensAt ?? Number.POSITIVE_INFINITY) -
+        (right.drainOpensAt ?? Number.POSITIVE_INFINITY),
+    );
   return (
     <div className="w-full space-y-6">
       {parent === null ? null : (
@@ -1508,6 +1511,53 @@ function AccountPoolSettings() {
                 }
               />
             </ConfigFieldRow>
+            <div className="py-2.5">
+              <div className="text-sm text-foreground">Drain windows</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                When each reserve account joins the primary ones, counted in
+                working hours before its weekly reset.
+              </div>
+              {reserveAccounts.length === 0 ? (
+                <p className="mt-2 text-xs text-subtle-foreground/75">
+                  No reserve accounts yet.
+                </p>
+              ) : (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-subtle-foreground/75">
+                      <tr>
+                        <th className="py-1 pr-3 font-normal">Account</th>
+                        <th className="py-1 pr-3 font-normal">Opens</th>
+                        <th className="py-1 pr-3 font-normal">Weekly reset</th>
+                        <th className="py-1 font-normal">Cap now</th>
+                      </tr>
+                    </thead>
+                    <tbody className="tabular-nums">
+                      {reserveAccounts.map((account) => {
+                        const reset = weeklyResetAt(account);
+                        const opens = account.drainOpensAt;
+                        return (
+                          <tr key={account.id} className="border-t border-border">
+                            <td className="py-1 pr-3">{account.label}</td>
+                            <td className="py-1 pr-3">
+                              {opens === null
+                                ? "unknown reset"
+                                : opens <= Date.now()
+                                  ? "open now"
+                                  : moment(opens)}
+                            </td>
+                            <td className="py-1 pr-3">
+                              {reset === null ? "—" : moment(reset)}
+                            </td>
+                            <td className="py-1">{percent(account.capLimit)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
             <ConfigFieldRow
               label="Reserve drain hours"
               description="Working hours before a weekly reset when reserve accounts join primary ones."
@@ -1532,24 +1582,43 @@ function AccountPoolSettings() {
               />
             </ConfigFieldRow>
             <ConfigFieldRow
-              label="Rest days"
-              description="Weekdays that do not count toward window progress, 0 is Sunday. Empty counts every day."
+              label="Days off"
+              description="Days the pool treats as not working: their hours do not move an account toward its reset, so caps stay low over a weekend."
               error={routingError}
             >
-              <Input
-                aria-label="Rest days"
-                placeholder="0,6"
-                disabled={config === null || pending !== null}
-                value={restDraft}
-                onChange={(event) => {
-                  setRestDraft(event.target.value);
-                  setRoutingError(null);
-                }}
-                onBlur={() => void saveRestDays()}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-              />
+              <div>
+                <div className="flex flex-wrap gap-1" aria-label="Days off">
+                  {WEEKDAY_LABELS.map((title, day) => {
+                    const off = (config?.restDays ?? []).includes(day);
+                    return (
+                      <Button
+                        key={title}
+                        type="button"
+                        size="sm"
+                        variant={off ? undefined : "outline"}
+                        aria-pressed={off}
+                        disabled={config === null || pending !== null}
+                        onClick={() =>
+                          void saveRouting({
+                            restDays: off
+                              ? (config?.restDays ?? []).filter(
+                                  (value) => value !== day,
+                                )
+                              : [...(config?.restDays ?? []), day].sort(
+                                  (left, right) => left - right,
+                                ),
+                          })
+                        }
+                      >
+                        {title}
+                      </Button>
+                    );
+                  })}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {daysOffSummary(config?.restDays ?? [])}
+                </p>
+              </div>
             </ConfigFieldRow>
           </div>
         </div>
