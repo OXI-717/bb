@@ -8,8 +8,8 @@
     "bb": ">=0.0"
   },
   "bb": {
-    "name": "Account Pooler Balanced",
-    "description": "Routes Claude and Codex API traffic across provider account pools.",
+    "name": "Пул аккаунтов (balanced)",
+    "description": "Распределяет запросы Claude и Codex по пулу аккаунтов.",
     "branding": {
       "icon": "Layers"
     },
