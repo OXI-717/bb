@@ -47,6 +47,10 @@ const TOKEN_EXPIRY_SAFETY_MS = 60_000;
 const ALLOWED_REQUEST_HEADERS = new Set([
   "accept",
   "content-type",
+  // The body is relayed byte for byte, so whatever describes its encoding has to travel
+  // with it: dropping this header left Cursor parsing a gzipped Connect message as raw
+  // protobuf and answering "parse binary: illegal tag".
+  "content-encoding",
   "user-agent",
 ]);
 const ALLOWED_REQUEST_HEADER_PREFIXES = ["connect-", "x-cursor-", "x-request-id"];

@@ -717,6 +717,7 @@ describe("Account Pool plugin", () => {
           authorization: `Bearer ${fixture.key}`,
           "x-cursor-streaming": "true",
           "accept-encoding": "gzip",
+          "content-encoding": "gzip",
           "x-unrelated-header": "dropped",
         },
         body,
@@ -736,6 +737,8 @@ describe("Account Pool plugin", () => {
     // Compression must not be negotiated upstream: the hub drops `content-encoding` on
     // the way back, and the client would be handed gzip it cannot account for.
     expect(requests[0]?.headers.has("accept-encoding")).toBe(false);
+    // The body travels untouched, so its own encoding header has to travel with it.
+    expect(requests[0]?.headers.get("content-encoding")).toBe("gzip");
     expect(requests[0]?.headers.has("x-unrelated-header")).toBe(false);
     expect(await requests[0]?.text()).toBe(body);
   });
