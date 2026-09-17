@@ -53,6 +53,7 @@ export interface AccountPoolPluginOptions {
   zaiUsagesUrl?: string;
   opencodeGoUsagesUrl?: string;
   cursorExchangeUrl?: string;
+  cursorUsageUrl?: string;
   usageUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
@@ -133,6 +134,7 @@ export function createAccountPoolPlugin(
       zaiUsagesUrl: options.zaiUsagesUrl,
       opencodeGoUsagesUrl: options.opencodeGoUsagesUrl,
       cursorExchangeUrl: options.cursorExchangeUrl,
+      cursorUsageUrl: options.cursorUsageUrl,
       usageUrl: options.usageUrl,
       profileUrl: options.oauthProfileUrl,
       importClaudeCredentials: options.importCredentials,

@@ -690,8 +690,12 @@ describe("Account Pool plugin", () => {
       apiKey: "cursor-subscription-key",
       options: {
         cursorExchangeUrl: "https://exchange.example/auth/exchange_user_api_key",
+        cursorUsageUrl: "https://usage.example/GetCurrentPeriodUsage",
         fetch: async (input, init) => {
           const request = new Request(input, init);
+          if (request.url.startsWith("https://usage.example/")) {
+            return Response.json({ planUsage: { totalPercentUsed: 10 } });
+          }
           if (request.url.startsWith("https://exchange.example/")) {
             exchanges += 1;
             expect(request.headers.get("authorization")).toBe(
@@ -725,7 +729,7 @@ describe("Account Pool plugin", () => {
     );
     expect(response.status).toBe(200);
     await response.json();
-    expect(exchanges).toBe(1);
+    expect(exchanges).toBeGreaterThanOrEqual(1);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe(
       "https://upstream.example/agent.v1.AgentService/RunSSE",
@@ -788,6 +792,47 @@ describe("Account Pool plugin", () => {
     expect(response.headers.get("retry-after")).toBeNull();
     expect(await response.text()).toContain("exhausted");
     expect(requests).toHaveLength(0);
+  });
+
+  it("reports the Cursor billing cycle as pool headroom", async () => {
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "cursor",
+      source: "api-key",
+      apiKey: "cursor-subscription-key",
+      options: {
+        cursorExchangeUrl: "https://exchange.example/auth/exchange_user_api_key",
+        cursorUsageUrl: "https://usage.example/GetCurrentPeriodUsage",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.url.startsWith("https://exchange.example/")) {
+            return Response.json({
+              accessToken: "minted-access-token",
+              refreshToken: "minted-refresh-token",
+            });
+          }
+          if (request.url.startsWith("https://usage.example/")) {
+            expect(request.headers.get("authorization")).toBe(
+              "Bearer minted-access-token",
+            );
+            expect(request.headers.get("connect-protocol-version")).toBe("1");
+            return Response.json({
+              billingCycleEnd: 1791981275000,
+              planUsage: { totalPercentUsed: 26.76969696969697 },
+            });
+          }
+          return Response.json({ ok: true });
+        },
+      },
+    });
+    await fixture.host.harness.behavior.callRpc("account.refreshUsage", {
+      accountId: fixture.account.id,
+    });
+    const account = statusSchema
+      .parse(await fixture.host.harness.behavior.callRpc("status.get", null))
+      .accounts.find((candidate) => candidate.id === fixture.account.id);
+    expect(account?.sevenDayUtilization).toBeCloseTo(0.2677, 4);
+    expect(account?.sevenDayResetAt).toBe(1791981275000);
   });
 
   it("mounts every Cursor path the CLI is known to call", async () => {

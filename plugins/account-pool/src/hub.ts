@@ -64,6 +64,8 @@ const DEFAULT_ZAI_USAGES_URL =
 const DEFAULT_OPENCODE_GO_USAGES_URL = "https://opencode.ai/zen/go/v1/usage";
 const DEFAULT_CURSOR_EXCHANGE_URL =
   "https://api2.cursor.sh/auth/exchange_user_api_key";
+const DEFAULT_CURSOR_USAGE_URL =
+  "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_INLINE_HOLD_MS = 20_000;
 const MAX_REFRESH_BACKOFF_MS = 60_000;
@@ -1249,6 +1251,7 @@ export function createHub(options: {
   zaiUsagesUrl?: string;
   opencodeGoUsagesUrl?: string;
   cursorExchangeUrl?: string;
+  cursorUsageUrl?: string;
   usageUrl?: string;
   profileUrl?: string;
   drainTimeoutMs?: number;
@@ -1308,6 +1311,7 @@ export function createHub(options: {
       "cursor",
       createCursorAdapter({
         exchangeUrl: options.cursorExchangeUrl ?? DEFAULT_CURSOR_EXCHANGE_URL,
+        usageUrl: options.cursorUsageUrl ?? DEFAULT_CURSOR_USAGE_URL,
       }),
     ],
   ]);

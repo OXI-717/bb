@@ -89,8 +89,19 @@ function tokenExpiry(token: string): number | null {
   }
 }
 
+const usageResponseSchema = z
+  .object({
+    billingCycleEnd: z.union([z.number(), z.string()]).nullish(),
+    planUsage: z
+      .object({ totalPercentUsed: z.union([z.number(), z.string()]).nullish() })
+      .passthrough()
+      .nullish(),
+  })
+  .passthrough();
+
 export function createCursorAdapter(options: {
   exchangeUrl: string;
+  usageUrl: string;
 }): ProviderAdapter {
   const minted = new Map<string, MintedToken>();
 
@@ -194,7 +205,45 @@ export function createCursorAdapter(options: {
       };
       return { secret, refreshed: false };
     },
-    async refreshUsage() {},
+    refreshesApiKeyUsage: true,
+    async refreshUsage(context) {
+      // `freshSecret` already hands back a token minted from the pooled API key.
+      const secret = await context.freshSecret();
+      if (secret.kind !== "oauth") return;
+      const response = await context.fetch(options.usageUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${secret.accessToken}`,
+          "content-type": "application/json",
+          "connect-protocol-version": "1",
+          accept: "application/json",
+        },
+        body: "{}",
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+      const parsed = usageResponseSchema.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (!parsed.success) return;
+      const used = Number(parsed.data.planUsage?.totalPercentUsed);
+      if (!Number.isFinite(used)) return;
+      const cycleEnd = Number(parsed.data.billingCycleEnd);
+      const previous = context.quotas.get(context.account.id);
+      context.quotas.put({
+        ...previous,
+        // Cursor meters one billing cycle rather than a rolling week; it lands in the
+        // long-window slot because that is the one the gate paces against.
+        sevenDayUtilization: Math.min(Math.max(used / 100, 0), 1),
+        sevenDayResetAt: Number.isFinite(cycleEnd) ? cycleEnd : null,
+        sevenDayStatus: null,
+        observedAt: context.now(),
+        error: null,
+      });
+    },
     errorResponse(status, message, headers) {
       return Response.json({ error: { message, code: status } }, {
         status,
