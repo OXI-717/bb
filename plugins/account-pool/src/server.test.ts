@@ -736,6 +736,53 @@ describe("Account Pool plugin", () => {
     expect(await requests[0]?.text()).toBe(body);
   });
 
+  it("refuses outright when the pooled subscription is spent for days", async () => {
+    const requests: Request[] = [];
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "opencode-go",
+      source: "api-key",
+      apiKey: "sk-go",
+      options: {
+        opencodeGoUsagesUrl: "https://usages.example/zen/go/v1/usage",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.url.startsWith("https://usages.example/")) {
+            // Weekly window spent; the next reset is days away.
+            return Response.json({
+              usage: {
+                rolling: { percent: 4 },
+                weekly: {
+                  percent: 100,
+                  resetsAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+                },
+              },
+            });
+          }
+          requests.push(request);
+          return Response.json({ ok: true });
+        },
+      },
+    });
+    const response = await fixture.host.harness.behavior.fetchHttp(
+      "POST",
+      "/opencode-go/v1/chat/completions",
+      {
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${fixture.key}`,
+        },
+        body: JSON.stringify({ model: "glm-5.3", messages: [] }),
+      },
+    );
+    // The symptom this replaces: a 429 with a multi-day `retry-after`, which coding
+    // agents obey in silence — the thread hangs and reports nothing at all.
+    expect(response.status).toBe(403);
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(await response.text()).toContain("exhausted");
+    expect(requests).toHaveLength(0);
+  });
+
   it("mounts every Cursor path the CLI is known to call", async () => {
     const fixture = await createFixture({
       upstreamUrl: "https://upstream.example",
@@ -759,6 +806,12 @@ describe("Account Pool plugin", () => {
         "aiserver.v1.AiService/GetDefaultModelForCli",
         "aiserver.v1.AiService/GetUsableModels",
         "aiserver.v1.AnalyticsService/BootstrapStatsig",
+        "aiserver.v1.AnalyticsService/TrackEvents",
+        "aiserver.v1.DashboardService/GetGlobalCommands",
+        "aiserver.v1.DashboardService/GetManagedSkills",
+        "aiserver.v1.DashboardService/GetMe",
+        "aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam",
+        "v1/traces",
         "aiserver.v1.BidiService/BidiAppend",
         "aiserver.v1.DashboardService/GetCurrentPeriodUsage",
         "aiserver.v1.DashboardService/GetPlanInfo",
@@ -1143,8 +1196,10 @@ describe("Account Pool plugin", () => {
         body: JSON.stringify({ model: "gpt-5", input: [] }),
       },
     );
-    expect(blocked.status).toBe(429);
-    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(80_000);
+    // Exhausted for the rest of the week: a refusal, not a retry hint a client would
+    // sit out in silence.
+    expect(blocked.status).toBe(403);
+    expect(blocked.headers.get("retry-after")).toBeNull();
     const secret = accountSecretSchema.parse(
       JSON.parse(
         await fs.readFile(
@@ -3181,7 +3236,7 @@ describe("Account Pool plugin", () => {
         const responses = await Promise.all(requests);
         await Promise.all(responses.map((response) => response.text()));
         expect(responses.map((response) => response.status)).toEqual(
-          cancelReporter ? [499, 200] : [401, 429],
+          cancelReporter ? [499, 200] : [401, 403],
         );
         expect(attempts).toBe(cancelReporter ? 3 : 2);
       } finally {
@@ -4057,13 +4112,13 @@ describe("Account Pool plugin", () => {
         exhausted.add("sk-first");
         exhausted.add("sk-second");
         const unavailable = await send();
-        expect(unavailable.status).toBe(429);
-        expect(unavailable.headers.get("retry-after")).toBe("60");
+        expect(unavailable.status).toBe(403);
+        expect(unavailable.headers.get("retry-after")).toBeNull();
         await unavailable.text();
         expect(attempts.slice(5)).toEqual(["sk-second", "sk-first"]);
         const stillUnavailable = await send();
-        expect(stillUnavailable.status).toBe(429);
-        expect(stillUnavailable.headers.get("retry-after")).toBe("60");
+        expect(stillUnavailable.status).toBe(403);
+        expect(stillUnavailable.headers.get("retry-after")).toBeNull();
         await stillUnavailable.text();
         expect(attempts).toHaveLength(7);
 
@@ -5364,7 +5419,8 @@ describe("Account Pool plugin", () => {
         name: "keeps invalid_grant accounts excluded despite a valid access token",
         elapsedMinutes: 6,
         failureStatus: 400,
-        expectedStatus: 429,
+        // Excluded account and nothing else to pick: a refusal, not a retry hint.
+        expectedStatus: 403,
       },
     ])("$name", async ({ elapsedMinutes, failureStatus, expectedStatus }) => {
       let now = 1_800_000_000_000;
@@ -5460,7 +5516,7 @@ describe("Account Pool plugin", () => {
         { headers: authHeaders(fixture.key), body: "{}" },
       );
       await recovered.text();
-      expect(recovered.status).toBe(failureStatus === 400 ? 429 : 200);
+      expect(recovered.status).toBe(failureStatus === 400 ? 403 : 200);
       expect(refreshCalls).toBe(failureStatus === 400 ? 1 : 2);
       if (failureStatus !== 400) {
         expect(authorizations.at(-1)).toBe(`Bearer ${newToken}`);
@@ -5561,7 +5617,7 @@ describe("Account Pool plugin", () => {
         "/v1/messages",
         { headers: authHeaders(refreshFixture.key), body: "{}" },
       );
-    expect(refreshResponse.status).toBe(429);
+    expect(refreshResponse.status).toBe(403);
     const refreshAccounts = z
       .array(accountSummarySchema)
       .parse(

@@ -1178,14 +1178,16 @@ export class AccountPoolHub {
         return resetAt > now ? [resetAt] : [];
       })
       .sort((left, right) => left - right)[0];
-    const retryAfter = Math.max(
-      1,
-      Math.ceil(((next ?? now + 1_000) - now) / 1_000),
-    );
+    // A refusal, not a rate limit with a hint to wait: short pacing has already been sat
+    // out by the selector, so anything reaching here needs a decision from the caller. A
+    // 429 carrying `retry-after` was worse than useless — coding agents honour it in
+    // silence, and an exhausted weekly quota looked like a hang with no error at all.
+    const resetAt = next === undefined ? null : new Date(next).toISOString();
     return adapter.errorResponse(
-      429,
-      "No Account Pooler account is currently eligible.",
-      { "retry-after": String(retryAfter) },
+      403,
+      resetAt === null
+        ? "Every Account Pooler account for this provider is exhausted."
+        : `Every Account Pooler account for this provider is exhausted until ${resetAt}.`,
     );
   }
 
