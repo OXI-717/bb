@@ -333,6 +333,15 @@ export function createAccountPoolPlugin(
           value: token,
           reason: "Account Pooler hub token for this machine",
         },
+        {
+          // Without this the CLI prefers a credential it already stored on the machine —
+          // on a developer's own Mac that is a real Cursor login, which the hub cannot
+          // authenticate, and the session dies at "Failed to initialize session services".
+          // A pooled session must neither read nor write the machine's credential store.
+          name: "AGENT_CLI_CREDENTIAL_STORE",
+          value: "memory",
+          reason: "Pooled session must ignore any credential stored on the machine",
+        },
       ];
     });
     bb.providers.experimental_contributeEnvHealth("acp-cursor", () =>
