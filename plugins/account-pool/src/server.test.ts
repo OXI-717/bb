@@ -809,6 +809,7 @@ describe("Account Pool plugin", () => {
         "aiserver.v1.AiService/AvailableModels",
         "aiserver.v1.AiService/GetDefaultModelForCli",
         "aiserver.v1.AiService/GetUsableModels",
+        "aiserver.v1.AiService/NameAgent",
         "aiserver.v1.AnalyticsService/BootstrapStatsig",
         "aiserver.v1.AnalyticsService/TrackEvents",
         "aiserver.v1.DashboardService/GetGlobalCommands",

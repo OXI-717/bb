@@ -17,6 +17,7 @@ export const CURSOR_PROXIED_PATHS: readonly string[] = [
   CURSOR_EXCHANGE_PATH,
   "aiserver.v1.AiService/AvailableModels",
   "aiserver.v1.AiService/GetUsableModels",
+  "aiserver.v1.AiService/NameAgent",
   "aiserver.v1.AiService/GetDefaultModelForCli",
   "aiserver.v1.AnalyticsService/BootstrapStatsig",
   "aiserver.v1.AnalyticsService/TrackEvents",
