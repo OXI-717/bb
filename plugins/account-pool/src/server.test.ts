@@ -115,25 +115,34 @@ async function resolveCodexToken(
   return { token: token.value, baseUrl: baseUrl.value.serverPath };
 }
 
-async function resolveKimiEnv(
+async function resolveAcpEnv(
   host: ReturnType<typeof createFakePluginHost>,
-  providerId = "acp-opencode-kimi",
+  providerId: string,
+  tokenName: string,
+  baseUrlName: string,
   hostId = "host-one",
 ): Promise<{ token: string; baseUrl: string }> {
   const entries = await host.harness.behavior.resolveProviderEnv(providerId, {
-    threadId: "thread-kimi",
+    threadId: `thread-${providerId}`,
     projectId: "project-one",
     hostId,
   });
-  const token = entries.find((entry) => entry.name === "KIMI_API_KEY");
-  const baseUrl = entries.find((entry) => entry.name === "OXI_KIMI_BASE_URL");
+  const token = entries.find((entry) => entry.name === tokenName);
+  const baseUrl = entries.find((entry) => entry.name === baseUrlName);
   if (token === undefined || typeof token.value !== "string") {
-    throw new Error("Kimi Account Pool token was not resolved.");
+    throw new Error(`${providerId} Account Pool token was not resolved.`);
   }
   if (baseUrl === undefined || typeof baseUrl.value !== "object") {
-    throw new Error("Kimi Account Pool base URL was not resolved.");
+    throw new Error(`${providerId} Account Pool base URL was not resolved.`);
   }
   return { token: token.value, baseUrl: baseUrl.value.serverPath };
+}
+
+async function resolveKimiEnv(
+  host: ReturnType<typeof createFakePluginHost>,
+  providerId = "acp-opencode-kimi",
+): Promise<{ token: string; baseUrl: string }> {
+  return resolveAcpEnv(host, providerId, "KIMI_API_KEY", "OXI_KIMI_BASE_URL");
 }
 
 afterEach(async () => {
@@ -264,7 +273,25 @@ async function createFixture(args: {
       ? (await resolveCodexToken(host)).token
       : args.provider === "kimi"
         ? (await resolveKimiEnv(host)).token
-        : await resolveToken(host);
+        : args.provider === "zai"
+          ? (
+              await resolveAcpEnv(
+                host,
+                "acp-opencode-zai",
+                "ZAI_API_KEY",
+                "OXI_ZAI_BASE_URL",
+              )
+            ).token
+          : args.provider === "opencode-go"
+            ? (
+                await resolveAcpEnv(
+                  host,
+                  "acp-opencode-go",
+                  "OPENCODE_API_KEY",
+                  "OXI_OPENCODE_GO_BASE_URL",
+                )
+              ).token
+            : await resolveToken(host);
   return { dataDir, host, service, key, account };
 }
 
@@ -589,6 +616,54 @@ describe("Account Pool plugin", () => {
       expect(quota?.sevenDayUtilization).toBe(0.45);
     },
   );
+
+  it("forwards the OpenCode session header and hides the pool token from Go", async () => {
+    const requests: Request[] = [];
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "opencode-go",
+      source: "api-key",
+      apiKey: "sk-go-subscription",
+      options: {
+        opencodeGoUsagesUrl: "https://usages.example/zen/go/v1/usage",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.url.startsWith("https://usages.example/")) {
+            return Response.json({
+              usage: { rolling: { percent: 4 }, weekly: { percent: 72 } },
+            });
+          }
+          requests.push(request);
+          return Response.json({ id: "completion-one" });
+        },
+      },
+    });
+    const body = JSON.stringify({ model: "glm-5.3", messages: [] });
+    const response = await fixture.host.harness.behavior.fetchHttp(
+      "POST",
+      "/opencode-go/v1/chat/completions",
+      {
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${fixture.key}`,
+          "x-opencode-session": "session-one",
+          "x-unrelated-header": "dropped",
+        },
+        body,
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "completion-one" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      "https://upstream.example/chat/completions",
+    );
+    expect(requests[0]?.headers.get("x-opencode-session")).toBe("session-one");
+    expect(requests[0]?.headers.get("authorization")).toBe(
+      "Bearer sk-go-subscription",
+    );
+    expect(requests[0]?.headers.has("x-unrelated-header")).toBe(false);
+  });
 
   it("imports, refreshes, and routes Codex HTTP sessions by provider", async () => {
     const seen: Array<{

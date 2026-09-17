@@ -1293,6 +1293,7 @@ export function createHub(options: {
         upstreamBaseUrl: (settings) => settings.opencodeGoUpstreamBaseUrl,
         usagesUrl:
           options.opencodeGoUsagesUrl ?? DEFAULT_OPENCODE_GO_USAGES_URL,
+        allowedHeaderPrefixes: ["x-opencode-"],
         parseUsages: opencodeGoQuotaFromUsages,
       }),
     ],

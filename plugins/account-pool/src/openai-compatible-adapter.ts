@@ -25,6 +25,7 @@ export interface OpenAiCompatibleAdapterOptions {
   mountPrefix: string;
   upstreamBaseUrl: (settings: AccountPoolConfig) => string;
   usagesUrl: string;
+  allowedHeaderPrefixes?: readonly string[];
   parseUsages: (
     accountId: string,
     payload: unknown,
@@ -60,11 +61,10 @@ export function createOpenAiCompatibleAdapter(
         `${options.mountPrefix}v1/`,
       ),
     requestHeaders(inbound, _account, secret) {
-      const headers = filterRequestHeaders(
-        inbound,
-        ALLOWED_REQUEST_HEADERS,
-        ALLOWED_REQUEST_HEADER_PREFIXES,
-      );
+      const headers = filterRequestHeaders(inbound, ALLOWED_REQUEST_HEADERS, [
+        ...ALLOWED_REQUEST_HEADER_PREFIXES,
+        ...(options.allowedHeaderPrefixes ?? []),
+      ]);
       if (secret.kind !== "api-key") {
         throw new Error(
           `${options.upstreamName} accounts require an API key secret.`,
