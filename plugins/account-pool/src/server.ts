@@ -27,6 +27,7 @@ import {
   ZAI_MOUNT_PREFIX,
 } from "./openai-compatible-adapter.js";
 import { PoolOperations } from "./operations.js";
+import { registerUsageSource } from "./usage-source.js";
 import { accountPoolRpcContract, createRpcHandlers } from "./rpc.js";
 import { ClaudeOAuthLogin } from "./oauth-login.js";
 import { CodexDeviceLogin } from "./codex-device-login.js";
@@ -191,6 +192,7 @@ export function createAccountPoolPlugin(
       createRpcHandlers(operations, login, codexLogin, config),
     );
     registerPoolCli(bb, operations, login, codexLogin, config);
+    registerUsageSource(bb, hub);
     const proxiedHealth = async (provider: PoolProvider) =>
       (await operations.isRoutingEnabled(provider)) &&
       (await operations.hasUsableEnabledAccount(provider))
