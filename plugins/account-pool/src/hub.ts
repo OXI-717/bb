@@ -48,6 +48,7 @@ import type {
 const DEFAULT_REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+const DEFAULT_KIMI_USAGES_URL = "https://api.kimi.com/coding/v1/usages";
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_INLINE_HOLD_MS = 20_000;
 const MAX_REFRESH_BACKOFF_MS = 60_000;
@@ -207,7 +208,8 @@ export class AccountPoolHub {
     const accounts = (await this.options.accounts.list()).filter(
       (account) =>
         account.enabled &&
-        account.kind === "oauth" &&
+        (account.kind === "oauth" ||
+          this.adapter(account.provider).refreshesApiKeyUsage === true) &&
         (accountId === undefined || account.id === accountId),
     );
     await Promise.all(
@@ -1222,6 +1224,7 @@ export function createHub(options: {
   codexUsageUrl?: string;
   importClaudeCredentials?: () => Promise<ImportedClaudeCredentials>;
   importCodexCredentials?: () => Promise<ImportedCodexCredentials>;
+  kimiUsagesUrl?: string;
   usageUrl?: string;
   profileUrl?: string;
   drainTimeoutMs?: number;
@@ -1247,7 +1250,12 @@ export function createHub(options: {
         importCredentials: options.importCodexCredentials,
       }),
     ],
-    ["kimi", createKimiAdapter()],
+    [
+      "kimi",
+      createKimiAdapter({
+        usagesUrl: options.kimiUsagesUrl ?? DEFAULT_KIMI_USAGES_URL,
+      }),
+    ],
   ]);
   return new AccountPoolHub({
     route: options.route,

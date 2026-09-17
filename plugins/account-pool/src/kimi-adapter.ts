@@ -1,9 +1,12 @@
 import type { ProviderAdapter } from "./provider-adapter.js";
 import { filterRequestHeaders, mountedUpstreamUrl } from "./provider-adapter.js";
+import { kimiQuotaFromUsages } from "./kimi-usage.js";
 import { isQuotaRejection, quotaFromHeaders } from "./quota.js";
 import { parseRequestBody } from "./request-body.js";
 
 export const KIMI_MOUNT_PREFIX = "kimi/";
+
+const USAGE_REQUEST_TIMEOUT_MS = 10_000;
 
 const ALLOWED_REQUEST_HEADERS = new Set([
   "accept",
@@ -12,7 +15,7 @@ const ALLOWED_REQUEST_HEADERS = new Set([
 ]);
 const ALLOWED_REQUEST_HEADER_PREFIXES = ["anthropic-", "x-stainless-"];
 
-export function createKimiAdapter(): ProviderAdapter {
+export function createKimiAdapter(options: { usagesUrl: string }): ProviderAdapter {
   return {
     provider: "kimi",
     upstreamName: "Kimi For Coding",
@@ -54,7 +57,29 @@ export function createKimiAdapter(): ProviderAdapter {
     async refreshSecret(context) {
       return { secret: context.secret, refreshed: false };
     },
-    async refreshUsage() {},
+    refreshesApiKeyUsage: true,
+    async refreshUsage(context) {
+      const secret = await context.freshSecret();
+      if (secret.kind !== "api-key") return;
+      const response = await context.fetch(options.usagesUrl, {
+        headers: {
+          authorization: `Bearer ${secret.apiKey}`,
+          accept: "application/json",
+        },
+        signal: AbortSignal.timeout(USAGE_REQUEST_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+      const quota = kimiQuotaFromUsages(
+        context.account.id,
+        await response.json().catch(() => null),
+        context.quotas.get(context.account.id),
+        context.now(),
+      );
+      if (quota !== null) context.quotas.put(quota);
+    },
     errorResponse(status, message, headers) {
       const type =
         status === 401

@@ -40,6 +40,7 @@ export interface AccountPoolPluginOptions {
   refreshUrl?: string;
   codexRefreshUrl?: string;
   codexUsageUrl?: string;
+  kimiUsagesUrl?: string;
   usageUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
@@ -116,6 +117,7 @@ export function createAccountPoolPlugin(
       refreshUrl: options.refreshUrl,
       codexRefreshUrl: options.codexRefreshUrl,
       codexUsageUrl: options.codexUsageUrl,
+      kimiUsagesUrl: options.kimiUsagesUrl,
       usageUrl: options.usageUrl,
       profileUrl: options.oauthProfileUrl,
       importClaudeCredentials: options.importCredentials,

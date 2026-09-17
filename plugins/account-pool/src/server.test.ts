@@ -524,14 +524,23 @@ describe("Account Pool plugin", () => {
     "routes %s through the hub with a machine token instead of the subscription key",
     async (providerId) => {
       const requests: Request[] = [];
+      const usageRequests: Request[] = [];
       const fixture = await createFixture({
         upstreamUrl: "https://upstream.example",
         provider: "kimi",
         source: "api-key",
         apiKey: "sk-kimi-subscription",
         options: {
+          kimiUsagesUrl: "https://usages.example/coding/v1/usages",
           fetch: async (input, init) => {
-            requests.push(new Request(input, init));
+            const request = new Request(input, init);
+            if (request.url.startsWith("https://usages.example/")) {
+              usageRequests.push(request);
+              return Response.json({
+                usage: { limit: "100", used: "45", remaining: "55" },
+              });
+            }
+            requests.push(request);
             return Response.json({ id: "message-one" });
           },
         },
@@ -567,6 +576,11 @@ describe("Account Pool plugin", () => {
         "sk-kimi-subscription",
       );
       expect(await requests[0]?.text()).toBe(body);
+      expect(usageRequests.length).toBeGreaterThan(0);
+      const quota = statusSchema
+        .parse(await fixture.host.harness.behavior.callRpc("status.get", null))
+        .accounts.find((account) => account.id === fixture.account.id);
+      expect(quota?.sevenDayUtilization).toBe(0.45);
     },
   );
 
