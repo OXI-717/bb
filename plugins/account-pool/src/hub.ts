@@ -15,6 +15,15 @@ import {
   DEFAULT_CODEX_USAGE_URL,
 } from "./codex-adapter.js";
 import { createKimiAdapter } from "./kimi-adapter.js";
+import {
+  createOpenAiCompatibleAdapter,
+  OPENCODE_GO_MOUNT_PREFIX,
+  ZAI_MOUNT_PREFIX,
+} from "./openai-compatible-adapter.js";
+import {
+  opencodeGoQuotaFromUsages,
+  zaiQuotaFromUsages,
+} from "./openai-compatible-usage.js";
 import type { ProviderAdapter } from "./provider-adapter.js";
 import type { ImportedProviderAccount } from "./provider-adapter.js";
 import { TransientOAuthRefreshError } from "./provider-adapter.js";
@@ -49,6 +58,9 @@ const DEFAULT_REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
 const DEFAULT_KIMI_USAGES_URL = "https://api.kimi.com/coding/v1/usages";
+const DEFAULT_ZAI_USAGES_URL =
+  "https://api.z.ai/api/monitor/usage/quota/limit";
+const DEFAULT_OPENCODE_GO_USAGES_URL = "https://opencode.ai/zen/go/v1/usage";
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_INLINE_HOLD_MS = 20_000;
 const MAX_REFRESH_BACKOFF_MS = 60_000;
@@ -311,6 +323,9 @@ export class AccountPoolHub {
         claude: this.activeAccounts.get("claude")?.accountId ?? null,
         codex: this.activeAccounts.get("codex")?.accountId ?? null,
         kimi: this.activeAccounts.get("kimi")?.accountId ?? null,
+        zai: this.activeAccounts.get("zai")?.accountId ?? null,
+        "opencode-go":
+          this.activeAccounts.get("opencode-go")?.accountId ?? null,
       },
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
@@ -1225,6 +1240,8 @@ export function createHub(options: {
   importClaudeCredentials?: () => Promise<ImportedClaudeCredentials>;
   importCodexCredentials?: () => Promise<ImportedCodexCredentials>;
   kimiUsagesUrl?: string;
+  zaiUsagesUrl?: string;
+  opencodeGoUsagesUrl?: string;
   usageUrl?: string;
   profileUrl?: string;
   drainTimeoutMs?: number;
@@ -1254,6 +1271,29 @@ export function createHub(options: {
       "kimi",
       createKimiAdapter({
         usagesUrl: options.kimiUsagesUrl ?? DEFAULT_KIMI_USAGES_URL,
+      }),
+    ],
+    [
+      "zai",
+      createOpenAiCompatibleAdapter({
+        provider: "zai",
+        upstreamName: "Z.ai Coding Plan",
+        mountPrefix: ZAI_MOUNT_PREFIX,
+        upstreamBaseUrl: (settings) => settings.zaiUpstreamBaseUrl,
+        usagesUrl: options.zaiUsagesUrl ?? DEFAULT_ZAI_USAGES_URL,
+        parseUsages: zaiQuotaFromUsages,
+      }),
+    ],
+    [
+      "opencode-go",
+      createOpenAiCompatibleAdapter({
+        provider: "opencode-go",
+        upstreamName: "OpenCode Go",
+        mountPrefix: OPENCODE_GO_MOUNT_PREFIX,
+        upstreamBaseUrl: (settings) => settings.opencodeGoUpstreamBaseUrl,
+        usagesUrl:
+          options.opencodeGoUsagesUrl ?? DEFAULT_OPENCODE_GO_USAGES_URL,
+        parseUsages: opencodeGoQuotaFromUsages,
       }),
     ],
   ]);

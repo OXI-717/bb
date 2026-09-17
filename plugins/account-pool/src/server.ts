@@ -17,6 +17,10 @@ import type {
 } from "./credentials.js";
 import { createHub } from "./hub.js";
 import { KIMI_MOUNT_PREFIX } from "./kimi-adapter.js";
+import {
+  OPENCODE_GO_MOUNT_PREFIX,
+  ZAI_MOUNT_PREFIX,
+} from "./openai-compatible-adapter.js";
 import { PoolOperations } from "./operations.js";
 import { accountPoolRpcContract, createRpcHandlers } from "./rpc.js";
 import { ClaudeOAuthLogin } from "./oauth-login.js";
@@ -41,6 +45,8 @@ export interface AccountPoolPluginOptions {
   codexRefreshUrl?: string;
   codexUsageUrl?: string;
   kimiUsagesUrl?: string;
+  zaiUsagesUrl?: string;
+  opencodeGoUsagesUrl?: string;
   usageUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
@@ -118,6 +124,8 @@ export function createAccountPoolPlugin(
       codexRefreshUrl: options.codexRefreshUrl,
       codexUsageUrl: options.codexUsageUrl,
       kimiUsagesUrl: options.kimiUsagesUrl,
+      zaiUsagesUrl: options.zaiUsagesUrl,
+      opencodeGoUsagesUrl: options.opencodeGoUsagesUrl,
       usageUrl: options.usageUrl,
       profileUrl: options.oauthProfileUrl,
       importClaudeCredentials: options.importCredentials,
@@ -240,6 +248,68 @@ export function createAccountPoolPlugin(
     bb.providers.experimental_contributeEnvHealth("codex", () =>
       proxiedHealth("codex"),
     );
+    const openAiCompatibleRoutes: ReadonlyArray<{
+      provider: PoolProvider;
+      mountPrefix: string;
+      providerId: string;
+      keyEnv: string;
+      baseUrlEnv: string;
+    }> = [
+      {
+        provider: "zai",
+        mountPrefix: ZAI_MOUNT_PREFIX,
+        providerId: "acp-opencode-zai",
+        keyEnv: "ZAI_API_KEY",
+        baseUrlEnv: "OXI_ZAI_BASE_URL",
+      },
+      {
+        provider: "opencode-go",
+        mountPrefix: OPENCODE_GO_MOUNT_PREFIX,
+        providerId: "acp-opencode-go",
+        keyEnv: "OPENCODE_API_KEY",
+        baseUrlEnv: "OXI_OPENCODE_GO_BASE_URL",
+      },
+    ];
+    for (const entry of openAiCompatibleRoutes) {
+      for (const route of ["chat/completions", "responses", "models"]) {
+        bb.http.route(
+          "POST",
+          `/${entry.mountPrefix}v1/${route}`,
+          (context) => hub.handle(context.req.raw, entry.provider),
+          { auth: "none" },
+        );
+      }
+      bb.providers.experimental_contributeEnv(
+        entry.providerId,
+        async (context) => {
+          if (
+            !(await operations.isRoutingEnabled(entry.provider)) ||
+            (await routing.isBypassed(context.threadId)) ||
+            !(await operations.hasUsableEnabledAccount(entry.provider))
+          ) {
+            return [];
+          }
+          const token = await hubTokens.forHost(context.hostId);
+          return [
+            {
+              name: entry.baseUrlEnv,
+              value: {
+                serverPath: `${hubBasePath(bb.pluginId)}/${entry.mountPrefix}v1`,
+              },
+              reason: "Routed through the Account Pooler hub",
+            },
+            {
+              name: entry.keyEnv,
+              value: token,
+              reason: "Account Pooler hub token for this machine",
+            },
+          ];
+        },
+      );
+      bb.providers.experimental_contributeEnvHealth(entry.providerId, () =>
+        proxiedHealth(entry.provider),
+      );
+    }
     for (const providerId of [
       "acp-opencode-kimi",
       "acp-opencode-kimi-highspeed",

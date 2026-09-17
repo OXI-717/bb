@@ -98,6 +98,8 @@ function status(
     claude: null,
     codex: null,
     kimi: null,
+    zai: null,
+    "opencode-go": null,
   },
 ): PoolStatus {
   return {
@@ -110,7 +112,13 @@ function status(
     ],
     accounts,
     activeAccounts,
-    routing: { claude: true, codex: true, kimi: true },
+    routing: {
+      claude: true,
+      codex: true,
+      kimi: true,
+      zai: true,
+      "opencode-go": true,
+    },
   };
 }
 
@@ -119,6 +127,8 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
     anthropicUpstreamBaseUrl: "https://api.anthropic.com",
     codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
     kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
+    zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+    opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
     switchThreshold: 0.98,
     routingStrategy: "sequential",
     reserveDrainHours: 24,
@@ -173,7 +183,7 @@ describe("Account Pool settings", () => {
     window.localStorage.setItem(STATUS_CACHE_KEY, '{"accounts":"nope"}');
     const live = deferred<PoolStatus>();
     const slot = render([], { "status.get": () => live.promise });
-    expect(slot.getAllByText("Загрузка…")).toHaveLength(3);
+    expect(slot.getAllByText("Загрузка…")).toHaveLength(5);
     live.resolve(status());
     expect(await slot.findByText("person@example.com")).toBeTruthy();
   });
@@ -401,6 +411,8 @@ describe("Account Pool settings", () => {
           claude: account().id,
           codex: null,
           kimi: null,
+          zai: null,
+          "opencode-go": null,
         }),
     });
     expect(

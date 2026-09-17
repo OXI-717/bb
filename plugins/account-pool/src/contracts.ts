@@ -4,6 +4,8 @@ export const DEFAULT_ACCOUNT_POOL_CONFIG = {
   anthropicUpstreamBaseUrl: "https://api.anthropic.com",
   codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
   kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
+  zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+  opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
   switchThreshold: 0.98,
   routingStrategy: "sequential" as const,
   reserveDrainHours: 24,
@@ -62,6 +64,12 @@ export const accountPoolConfigSchema = z
     kimiUpstreamBaseUrl: httpUrlSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.kimiUpstreamBaseUrl,
     ),
+    zaiUpstreamBaseUrl: httpUrlSchema.default(
+      DEFAULT_ACCOUNT_POOL_CONFIG.zaiUpstreamBaseUrl,
+    ),
+    opencodeGoUpstreamBaseUrl: httpUrlSchema.default(
+      DEFAULT_ACCOUNT_POOL_CONFIG.opencodeGoUpstreamBaseUrl,
+    ),
     switchThreshold: switchThresholdSchema.default(
       DEFAULT_ACCOUNT_POOL_CONFIG.switchThreshold,
     ),
@@ -82,6 +90,8 @@ export const accountPoolConfigSetInputSchema = z
     anthropicUpstreamBaseUrl: httpUrlSchema.optional(),
     codexUpstreamBaseUrl: httpUrlSchema.optional(),
     kimiUpstreamBaseUrl: httpUrlSchema.optional(),
+    zaiUpstreamBaseUrl: httpUrlSchema.optional(),
+    opencodeGoUpstreamBaseUrl: httpUrlSchema.optional(),
     switchThreshold: switchThresholdSchema.optional(),
     routingStrategy: routingStrategySchema.optional(),
     reserveDrainHours: reserveDrainHoursSchema.optional(),
@@ -98,7 +108,13 @@ export interface AccountPoolConfigController {
   set: (input: AccountPoolConfigSetInput) => Promise<AccountPoolConfig>;
 }
 
-export const providerSchema = z.enum(["claude", "codex", "kimi"]);
+export const providerSchema = z.enum([
+  "claude",
+  "codex",
+  "kimi",
+  "zai",
+  "opencode-go",
+]);
 export type PoolProvider = z.infer<typeof providerSchema>;
 export const accountKindSchema = z.enum(["oauth", "api-key"]);
 export const modelFamilySchema = z.enum([
@@ -277,6 +293,8 @@ export const statusSchema = z
         claude: z.string().uuid().nullable(),
         codex: z.string().uuid().nullable(),
         kimi: z.string().uuid().nullable(),
+        zai: z.string().uuid().nullable(),
+        "opencode-go": z.string().uuid().nullable(),
       })
       .strict(),
     routing: z
@@ -284,6 +302,8 @@ export const statusSchema = z
         claude: z.boolean(),
         codex: z.boolean(),
         kimi: z.boolean(),
+        zai: z.boolean(),
+        "opencode-go": z.boolean(),
       })
       .strict(),
   })

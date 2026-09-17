@@ -59,9 +59,9 @@ export class PoolOperations {
           kind: "api-key",
           label:
             input.label ??
-            (input.provider === "kimi"
-              ? "Kimi For Coding API key"
-              : "Claude API key"),
+            (input.provider === "claude"
+              ? "Claude API key"
+              : `${input.provider} API key`),
           email: null,
           accountUuid: null,
           subscriptionType: null,
@@ -75,9 +75,9 @@ export class PoolOperations {
       await this.onAccountEnabled(account.id);
       return account;
     }
-    if (input.provider === "kimi") {
+    if (input.provider !== "claude" && input.provider !== "codex") {
       throw new Error(
-        "Kimi For Coding accounts can only be added with --api-key-stdin.",
+        `${input.provider} accounts can only be added with --api-key-stdin.`,
       );
     }
     const imported = await this.hub.importAccount(input.provider);
@@ -237,10 +237,12 @@ export class PoolOperations {
     await this.hubTokens.prune(hosts.map((host) => host.id));
     const status = await this.hub.status();
     const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
-    const [claude, codex, kimi] = await Promise.all([
+    const [claude, codex, kimi, zai, opencodeGo] = await Promise.all([
       this.routing.isProviderEnabled("claude"),
       this.routing.isProviderEnabled("codex"),
       this.routing.isProviderEnabled("kimi"),
+      this.routing.isProviderEnabled("zai"),
+      this.routing.isProviderEnabled("opencode-go"),
     ]);
     return {
       ...status,
@@ -255,7 +257,7 @@ export class PoolOperations {
             ? null
             : (hostNames.get(account.lastUsedHostId) ?? null),
       })),
-      routing: { claude, codex, kimi },
+      routing: { claude, codex, kimi, zai, "opencode-go": opencodeGo },
     };
   }
 

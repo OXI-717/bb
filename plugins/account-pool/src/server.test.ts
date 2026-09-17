@@ -203,7 +203,7 @@ function testJwt(payload: object): string {
 async function createFixture(args: {
   upstreamUrl: string;
   options?: AccountPoolPluginOptions;
-  provider?: "claude" | "codex" | "kimi";
+  provider?: "claude" | "codex" | "kimi" | "zai" | "opencode-go";
   source?: "api-key" | "import";
   apiKey?: string;
   priority?: number;
@@ -219,6 +219,8 @@ async function createFixture(args: {
     anthropicUpstreamBaseUrl: args.upstreamUrl,
     codexUpstreamBaseUrl: args.upstreamUrl,
     kimiUpstreamBaseUrl: args.upstreamUrl,
+    zaiUpstreamBaseUrl: args.upstreamUrl,
+    opencodeGoUpstreamBaseUrl: args.upstreamUrl,
   });
   const plugin = createAccountPoolPlugin({
     usageUrl: "data:application/json,{}",
@@ -370,6 +372,8 @@ describe("Account Pool config schema", () => {
       anthropicUpstreamBaseUrl: "https://api.anthropic.com",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
+      zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+      opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
       switchThreshold: 0.98,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -438,6 +442,8 @@ describe("Account Pool plugin", () => {
       anthropicUpstreamBaseUrl: "http://127.0.0.1:9000",
       codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
       kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
+      zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+      opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
       switchThreshold: 0.75,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -5391,7 +5397,13 @@ describe("Account Pool plugin", () => {
     const result = statusSchema.parse(
       await fixture.host.harness.behavior.callRpc("status.get", null),
     );
-    expect(result.routing).toEqual({ claude: false, codex: true, kimi: true });
+    expect(result.routing).toEqual({
+      claude: false,
+      codex: true,
+      kimi: true,
+      zai: true,
+      "opencode-go": true,
+    });
   });
 
   it("records the selected account's last-use time and host", async () => {
@@ -5800,6 +5812,8 @@ describe("sequential pool recovery", () => {
       claude: fixture.account.id,
       codex: null,
       kimi: null,
+      zai: null,
+      "opencode-go": null,
     });
     expect(
       pool.accounts.find((account) => account.id === fixture.account.id)

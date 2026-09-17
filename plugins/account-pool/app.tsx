@@ -114,6 +114,18 @@ const PROVIDERS: Array<{
     description:
       "Треды opencode с подпиской Kimi идут через эти ключи: на машине остаётся только токен хаба.",
   },
+  {
+    id: "zai",
+    title: "Z.ai Coding Plan",
+    description:
+      "Треды opencode с подпиской z.ai идут через эти ключи: на машине остаётся только токен хаба.",
+  },
+  {
+    id: "opencode-go",
+    title: "OpenCode Go",
+    description:
+      "Треды opencode с подпиской Go идут через эти ключи: на машине остаётся только токен хаба.",
+  },
 ];
 const FAMILY_LABELS: Record<ModelFamily, string> = {
   fable: "Fable, неделя",
@@ -143,6 +155,8 @@ function configDrafts(config: AccountPoolConfig): Record<ConfigField, string> {
     anthropicUpstreamBaseUrl: config.anthropicUpstreamBaseUrl,
     codexUpstreamBaseUrl: config.codexUpstreamBaseUrl,
     kimiUpstreamBaseUrl: config.kimiUpstreamBaseUrl,
+    zaiUpstreamBaseUrl: config.zaiUpstreamBaseUrl,
+    opencodeGoUpstreamBaseUrl: config.opencodeGoUpstreamBaseUrl,
     switchThreshold: String(config.switchThreshold),
   };
 }
@@ -966,6 +980,8 @@ function AccountPoolSettings() {
     anthropicUpstreamBaseUrl: "",
     codexUpstreamBaseUrl: "",
     kimiUpstreamBaseUrl: "",
+    zaiUpstreamBaseUrl: "",
+    opencodeGoUpstreamBaseUrl: "",
     switchThreshold: "",
   });
   const [configErrors, setConfigErrors] = useState<
@@ -974,6 +990,8 @@ function AccountPoolSettings() {
     anthropicUpstreamBaseUrl: null,
     codexUpstreamBaseUrl: null,
     kimiUpstreamBaseUrl: null,
+    zaiUpstreamBaseUrl: null,
+    opencodeGoUpstreamBaseUrl: null,
     switchThreshold: null,
   });
   const [dialog, setDialog] = useState<DialogState>(null);
