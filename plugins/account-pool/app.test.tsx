@@ -100,6 +100,7 @@ function status(
     kimi: null,
     zai: null,
     "opencode-go": null,
+    cursor: null,
   },
 ): PoolStatus {
   return {
@@ -118,6 +119,7 @@ function status(
       kimi: true,
       zai: true,
       "opencode-go": true,
+      cursor: true,
     },
   };
 }
@@ -129,6 +131,7 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
     kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
     zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
     opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
+    cursorUpstreamBaseUrl: "https://api2.cursor.sh",
     switchThreshold: 0.98,
     routingStrategy: "sequential",
     reserveDrainHours: 24,
@@ -183,7 +186,7 @@ describe("Account Pool settings", () => {
     window.localStorage.setItem(STATUS_CACHE_KEY, '{"accounts":"nope"}');
     const live = deferred<PoolStatus>();
     const slot = render([], { "status.get": () => live.promise });
-    expect(slot.getAllByText("Загрузка…")).toHaveLength(5);
+    expect(slot.getAllByText("Загрузка…")).toHaveLength(6);
     live.resolve(status());
     expect(await slot.findByText("person@example.com")).toBeTruthy();
   });
@@ -413,6 +416,7 @@ describe("Account Pool settings", () => {
           kimi: null,
           zai: null,
           "opencode-go": null,
+          cursor: null,
         }),
     });
     expect(

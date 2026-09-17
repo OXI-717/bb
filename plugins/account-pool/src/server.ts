@@ -16,6 +16,11 @@ import type {
   ImportedCodexCredentials,
 } from "./credentials.js";
 import { createHub } from "./hub.js";
+import {
+  CURSOR_EXCHANGE_PATH,
+  CURSOR_MOUNT_PREFIX,
+  CURSOR_PROXIED_PATHS,
+} from "./cursor-adapter.js";
 import { KIMI_MOUNT_PREFIX } from "./kimi-adapter.js";
 import {
   OPENCODE_GO_MOUNT_PREFIX,
@@ -47,6 +52,7 @@ export interface AccountPoolPluginOptions {
   kimiUsagesUrl?: string;
   zaiUsagesUrl?: string;
   opencodeGoUsagesUrl?: string;
+  cursorExchangeUrl?: string;
   usageUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
@@ -126,6 +132,7 @@ export function createAccountPoolPlugin(
       kimiUsagesUrl: options.kimiUsagesUrl,
       zaiUsagesUrl: options.zaiUsagesUrl,
       opencodeGoUsagesUrl: options.opencodeGoUsagesUrl,
+      cursorExchangeUrl: options.cursorExchangeUrl,
       usageUrl: options.usageUrl,
       profileUrl: options.oauthProfileUrl,
       importClaudeCredentials: options.importCredentials,
@@ -270,6 +277,67 @@ export function createAccountPoolPlugin(
         baseUrlEnv: "OXI_OPENCODE_GO_BASE_URL",
       },
     ];
+    // Cursor's CLI exchanges its configured key for tokens before anything else. The hub
+    // answers that itself instead of forwarding: it hands the machine back its own pool
+    // token, so the real subscription credential never leaves this host, and every later
+    // request arrives bearing a token the hub can recognise and swap for a minted one.
+    bb.http.route(
+      "POST",
+      `/${CURSOR_MOUNT_PREFIX}${CURSOR_EXCHANGE_PATH}`,
+      async (context) => {
+        const hostId = await hub.authenticate(context.req.raw);
+        if (hostId === null) {
+          return Response.json(
+            { error: { message: "Invalid Account Pooler bearer token.", code: 401 } },
+            { status: 401 },
+          );
+        }
+        const token = await hubTokens.forHost(hostId);
+        return Response.json({ accessToken: token, refreshToken: token });
+      },
+      { auth: "none" },
+    );
+    for (const path of CURSOR_PROXIED_PATHS) {
+      if (path === CURSOR_EXCHANGE_PATH) continue;
+      for (const method of ["POST", "GET"] as const) {
+        bb.http.route(
+          method,
+          `/${CURSOR_MOUNT_PREFIX}${path}`,
+          (context) => hub.handle(context.req.raw, "cursor"),
+          { auth: "none" },
+        );
+      }
+    }
+    bb.providers.experimental_contributeEnv("acp-cursor", async (context) => {
+      if (
+        !(await operations.isRoutingEnabled("cursor")) ||
+        (await routing.isBypassed(context.threadId)) ||
+        !(await operations.hasUsableEnabledAccount("cursor"))
+      ) {
+        return [];
+      }
+      const token = await hubTokens.forHost(context.hostId);
+      return [
+        {
+          name: "CURSOR_API_ENDPOINT",
+          value: {
+            serverPath: `${hubBasePath(bb.pluginId)}/${CURSOR_MOUNT_PREFIX}`.replace(
+              /\/$/u,
+              "",
+            ),
+          },
+          reason: "Routed through the Account Pooler hub",
+        },
+        {
+          name: "CURSOR_API_KEY",
+          value: token,
+          reason: "Account Pooler hub token for this machine",
+        },
+      ];
+    });
+    bb.providers.experimental_contributeEnvHealth("acp-cursor", () =>
+      proxiedHealth("cursor"),
+    );
     for (const entry of openAiCompatibleRoutes) {
       for (const route of ["chat/completions", "responses", "models"]) {
         bb.http.route(

@@ -126,6 +126,12 @@ const PROVIDERS: Array<{
     description:
       "Треды opencode с подпиской Go идут через эти ключи: на машине остаётся только токен хаба.",
   },
+  {
+    id: "cursor",
+    title: "Cursor",
+    description:
+      "Треды Cursor идут через этот ключ: машина получает токен хаба вместо ключа подписки.",
+  },
 ];
 const FAMILY_LABELS: Record<ModelFamily, string> = {
   fable: "Fable, неделя",
@@ -157,6 +163,7 @@ function configDrafts(config: AccountPoolConfig): Record<ConfigField, string> {
     kimiUpstreamBaseUrl: config.kimiUpstreamBaseUrl,
     zaiUpstreamBaseUrl: config.zaiUpstreamBaseUrl,
     opencodeGoUpstreamBaseUrl: config.opencodeGoUpstreamBaseUrl,
+    cursorUpstreamBaseUrl: config.cursorUpstreamBaseUrl,
     switchThreshold: String(config.switchThreshold),
   };
 }
@@ -982,6 +989,7 @@ function AccountPoolSettings() {
     kimiUpstreamBaseUrl: "",
     zaiUpstreamBaseUrl: "",
     opencodeGoUpstreamBaseUrl: "",
+    cursorUpstreamBaseUrl: "",
     switchThreshold: "",
   });
   const [configErrors, setConfigErrors] = useState<
@@ -992,6 +1000,7 @@ function AccountPoolSettings() {
     kimiUpstreamBaseUrl: null,
     zaiUpstreamBaseUrl: null,
     opencodeGoUpstreamBaseUrl: null,
+    cursorUpstreamBaseUrl: null,
     switchThreshold: null,
   });
   const [dialog, setDialog] = useState<DialogState>(null);

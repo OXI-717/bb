@@ -237,12 +237,13 @@ export class PoolOperations {
     await this.hubTokens.prune(hosts.map((host) => host.id));
     const status = await this.hub.status();
     const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
-    const [claude, codex, kimi, zai, opencodeGo] = await Promise.all([
+    const [claude, codex, kimi, zai, opencodeGo, cursor] = await Promise.all([
       this.routing.isProviderEnabled("claude"),
       this.routing.isProviderEnabled("codex"),
       this.routing.isProviderEnabled("kimi"),
       this.routing.isProviderEnabled("zai"),
       this.routing.isProviderEnabled("opencode-go"),
+      this.routing.isProviderEnabled("cursor"),
     ]);
     return {
       ...status,
@@ -257,7 +258,14 @@ export class PoolOperations {
             ? null
             : (hostNames.get(account.lastUsedHostId) ?? null),
       })),
-      routing: { claude, codex, kimi, zai, "opencode-go": opencodeGo },
+      routing: {
+        claude,
+        codex,
+        kimi,
+        zai,
+        "opencode-go": opencodeGo,
+        cursor,
+      },
     };
   }
 

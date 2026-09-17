@@ -14,6 +14,7 @@ import {
   DEFAULT_CODEX_REFRESH_URL,
   DEFAULT_CODEX_USAGE_URL,
 } from "./codex-adapter.js";
+import { createCursorAdapter } from "./cursor-adapter.js";
 import { createKimiAdapter } from "./kimi-adapter.js";
 import {
   createOpenAiCompatibleAdapter,
@@ -61,6 +62,8 @@ const DEFAULT_KIMI_USAGES_URL = "https://api.kimi.com/coding/v1/usages";
 const DEFAULT_ZAI_USAGES_URL =
   "https://api.z.ai/api/monitor/usage/quota/limit";
 const DEFAULT_OPENCODE_GO_USAGES_URL = "https://opencode.ai/zen/go/v1/usage";
+const DEFAULT_CURSOR_EXCHANGE_URL =
+  "https://api2.cursor.sh/auth/exchange_user_api_key";
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_INLINE_HOLD_MS = 20_000;
 const MAX_REFRESH_BACKOFF_MS = 60_000;
@@ -326,6 +329,7 @@ export class AccountPoolHub {
         zai: this.activeAccounts.get("zai")?.accountId ?? null,
         "opencode-go":
           this.activeAccounts.get("opencode-go")?.accountId ?? null,
+        cursor: this.activeAccounts.get("cursor")?.accountId ?? null,
       },
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
@@ -1242,6 +1246,7 @@ export function createHub(options: {
   kimiUsagesUrl?: string;
   zaiUsagesUrl?: string;
   opencodeGoUsagesUrl?: string;
+  cursorExchangeUrl?: string;
   usageUrl?: string;
   profileUrl?: string;
   drainTimeoutMs?: number;
@@ -1295,6 +1300,12 @@ export function createHub(options: {
           options.opencodeGoUsagesUrl ?? DEFAULT_OPENCODE_GO_USAGES_URL,
         allowedHeaderPrefixes: ["x-opencode-"],
         parseUsages: opencodeGoQuotaFromUsages,
+      }),
+    ],
+    [
+      "cursor",
+      createCursorAdapter({
+        exchangeUrl: options.cursorExchangeUrl ?? DEFAULT_CURSOR_EXCHANGE_URL,
       }),
     ],
   ]);

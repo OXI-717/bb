@@ -5,6 +5,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CURSOR_PROXIED_PATHS } from "./cursor-adapter.js";
 import {
   accountSchema,
   accountSecretSchema,
@@ -138,6 +139,23 @@ async function resolveAcpEnv(
   return { token: token.value, baseUrl: baseUrl.value.serverPath };
 }
 
+async function resolveCursorToken(
+  host: ReturnType<typeof createFakePluginHost>,
+): Promise<string> {
+  return (
+    await resolveAcpEnv(
+      host,
+      "acp-cursor",
+      "CURSOR_API_KEY",
+      "CURSOR_API_ENDPOINT",
+    )
+  ).token;
+}
+
+function pytestUnreachable(): never {
+  throw new Error("upstream must not be called for a local exchange");
+}
+
 async function resolveKimiEnv(
   host: ReturnType<typeof createFakePluginHost>,
   providerId = "acp-opencode-kimi",
@@ -212,7 +230,7 @@ function testJwt(payload: object): string {
 async function createFixture(args: {
   upstreamUrl: string;
   options?: AccountPoolPluginOptions;
-  provider?: "claude" | "codex" | "kimi" | "zai" | "opencode-go";
+  provider?: "claude" | "codex" | "kimi" | "zai" | "opencode-go" | "cursor";
   source?: "api-key" | "import";
   apiKey?: string;
   priority?: number;
@@ -230,6 +248,7 @@ async function createFixture(args: {
     kimiUpstreamBaseUrl: args.upstreamUrl,
     zaiUpstreamBaseUrl: args.upstreamUrl,
     opencodeGoUpstreamBaseUrl: args.upstreamUrl,
+    cursorUpstreamBaseUrl: args.upstreamUrl,
   });
   const plugin = createAccountPoolPlugin({
     usageUrl: "data:application/json,{}",
@@ -291,7 +310,9 @@ async function createFixture(args: {
                   "OXI_OPENCODE_GO_BASE_URL",
                 )
               ).token
-            : await resolveToken(host);
+            : args.provider === "cursor"
+              ? await resolveCursorToken(host)
+              : await resolveToken(host);
   return { dataDir, host, service, key, account };
 }
 
@@ -401,6 +422,7 @@ describe("Account Pool config schema", () => {
       kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
       zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
       opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
+      cursorUpstreamBaseUrl: "https://api2.cursor.sh",
       switchThreshold: 0.98,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -471,6 +493,7 @@ describe("Account Pool plugin", () => {
       kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
       zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
       opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
+      cursorUpstreamBaseUrl: "https://api2.cursor.sh",
       switchThreshold: 0.75,
       routingStrategy: "sequential",
       reserveDrainHours: 24,
@@ -616,6 +639,147 @@ describe("Account Pool plugin", () => {
       expect(quota?.sevenDayUtilization).toBe(0.45);
     },
   );
+
+  it("answers Cursor's key exchange with the machine's own pool token", async () => {
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "cursor",
+      source: "api-key",
+      apiKey: "cursor-subscription-key",
+      options: {
+        cursorExchangeUrl: "https://exchange.example/auth/exchange_user_api_key",
+        fetch: async () => pytestUnreachable(),
+      },
+    });
+    const denied = await fixture.host.harness.behavior.fetchHttp(
+      "POST",
+      "/cursor/auth/exchange_user_api_key",
+      { body: "{}" },
+    );
+    expect(denied.status).toBe(401);
+    const response = await fixture.host.harness.behavior.fetchHttp(
+      "POST",
+      "/cursor/auth/exchange_user_api_key",
+      {
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${fixture.key}`,
+        },
+        body: "{}",
+      },
+    );
+    expect(response.status).toBe(200);
+    const exchanged = (await response.json()) as {
+      accessToken: string;
+      refreshToken: string;
+    };
+    // The machine must end up holding its own revocable pool token, never the
+    // subscription key and never a renewable Cursor credential.
+    expect(exchanged.accessToken).toBe(fixture.key);
+    expect(exchanged.refreshToken).toBe(fixture.key);
+    expect(exchanged.accessToken).not.toBe("cursor-subscription-key");
+  });
+
+  it("mints an access token from the pooled key and never forwards the pool token", async () => {
+    const requests: Request[] = [];
+    let exchanges = 0;
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "cursor",
+      source: "api-key",
+      apiKey: "cursor-subscription-key",
+      options: {
+        cursorExchangeUrl: "https://exchange.example/auth/exchange_user_api_key",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          if (request.url.startsWith("https://exchange.example/")) {
+            exchanges += 1;
+            expect(request.headers.get("authorization")).toBe(
+              "Bearer cursor-subscription-key",
+            );
+            return Response.json({
+              accessToken: "minted-access-token",
+              refreshToken: "minted-refresh-token",
+            });
+          }
+          requests.push(request);
+          return Response.json({ ok: true });
+        },
+      },
+    });
+    const body = JSON.stringify({ prompt: "probe" });
+    const response = await fixture.host.harness.behavior.fetchHttp(
+      "POST",
+      "/cursor/agent.v1.AgentService/RunSSE",
+      {
+        headers: {
+          "content-type": "application/connect+proto",
+          authorization: `Bearer ${fixture.key}`,
+          "x-cursor-streaming": "true",
+          "x-unrelated-header": "dropped",
+        },
+        body,
+      },
+    );
+    expect(response.status).toBe(200);
+    await response.json();
+    expect(exchanges).toBe(1);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe(
+      "https://upstream.example/agent.v1.AgentService/RunSSE",
+    );
+    expect(requests[0]?.headers.get("authorization")).toBe(
+      "Bearer minted-access-token",
+    );
+    expect(requests[0]?.headers.get("x-cursor-streaming")).toBe("true");
+    expect(requests[0]?.headers.has("x-unrelated-header")).toBe(false);
+    expect(await requests[0]?.text()).toBe(body);
+  });
+
+  it("mounts every Cursor path the CLI is known to call", async () => {
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "cursor",
+      source: "api-key",
+      apiKey: "cursor-subscription-key",
+      options: {
+        cursorExchangeUrl: "https://exchange.example/auth/exchange_user_api_key",
+        fetch: async () => Response.json({ ok: true }),
+      },
+    });
+    // Pinned deliberately: iterating only the source list would pass even if a path were
+    // dropped from it, and a dropped path is invisible until Cursor 404s on a machine.
+    expect([...CURSOR_PROXIED_PATHS].sort()).toEqual(
+      [
+        "agent.v1.AgentService/GetUsableModels",
+        "agent.v1.AgentService/Run",
+        "agent.v1.AgentService/RunPoll",
+        "agent.v1.AgentService/RunSSE",
+        "aiserver.v1.AiService/AvailableModels",
+        "aiserver.v1.AiService/GetDefaultModelForCli",
+        "aiserver.v1.AiService/GetUsableModels",
+        "aiserver.v1.AnalyticsService/BootstrapStatsig",
+        "aiserver.v1.BidiService/BidiAppend",
+        "aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+        "aiserver.v1.DashboardService/GetPlanInfo",
+        "aiserver.v1.DashboardService/GetUserPrivacyMode",
+        "aiserver.v1.ServerConfigService/GetServerConfig",
+        "auth/exchange_user_api_key",
+        "settings",
+        "v1/bundle/archive",
+      ].sort(),
+    );
+    // The plugin router matches paths exactly, so an unmounted path 404s and Cursor
+    // breaks on the machine with no useful signal. Every catalogued path must answer.
+    for (const path of CURSOR_PROXIED_PATHS) {
+      const response = await fixture.host.harness.behavior.fetchHttp(
+        "POST",
+        `/cursor/${path}`,
+        { body: "{}" },
+      );
+      expect([path, response.status]).toEqual([path, 401]);
+    }
+  });
 
   it("forwards the OpenCode session header and hides the pool token from Go", async () => {
     const requests: Request[] = [];
@@ -5478,6 +5642,7 @@ describe("Account Pool plugin", () => {
       kimi: true,
       zai: true,
       "opencode-go": true,
+      cursor: true,
     });
   });
 
@@ -5889,6 +6054,7 @@ describe("sequential pool recovery", () => {
       kimi: null,
       zai: null,
       "opencode-go": null,
+      cursor: null,
     });
     expect(
       pool.accounts.find((account) => account.id === fixture.account.id)
