@@ -1,4 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { createPresetsSettingSchema } from "./create-presets-schema.js";
 import { migrations } from "./data.js";
 import { ingestLegacyImport } from "./legacy-import.js";
 import { pluginDataDirFromDb } from "./path.js";
@@ -18,6 +19,15 @@ function resolveServerUrl(): string {
 }
 
 export default async function plugin(bb: BbPluginApi) {
+  bb.settings.define({
+    creationPresets: {
+      type: "string",
+      label: "Additional creation menu items",
+      default: "[]",
+      experimental_multiline: true,
+      experimental_schema: createPresetsSettingSchema,
+    },
+  });
   const db = bb.storage.database();
   bb.storage.migrate(db, migrations);
   const pluginDataDir = pluginDataDirFromDb(db);

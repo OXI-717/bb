@@ -1470,3 +1470,11 @@ or with `bb settings general telemetryEnabled false`. The saved server-wide pref
 takes effect immediately and persists across restarts. SDK callers can use
 `system.updateGeneralSettings` with `telemetryEnabled`. `BB_TELEMETRY=false`
 always disables telemetry, even when the saved preference is enabled.
+
+### Automation creation presets
+
+The bundled automations plugin accepts `creationPresets` through plugin settings or
+`bb plugin config automations set creationPresets '<JSON array>'`. Entries contain
+`label`, `description`, and `prompt`; at most 20 unique labels. They appear before
+built-in examples in New automation and open an unsent composer draft. The prompt
+is used verbatim, allowing an external executor workflow without a local BB schedule.
