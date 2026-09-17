@@ -308,7 +308,10 @@ export function createAccountPoolPlugin(
         );
       }
     }
-    bb.providers.experimental_contributeEnv("acp-cursor", async (context) => {
+    // Both the built-in Cursor agent and our own wrapper entry: the wrapper exists only
+    // to pass --agent-endpoint, and it needs the same routed credentials.
+    for (const cursorProviderId of ["acp-cursor", "acp-oxi-cursor"]) {
+      bb.providers.experimental_contributeEnv(cursorProviderId, async (context) => {
       if (
         !(await operations.isRoutingEnabled("cursor")) ||
         (await routing.isBypassed(context.threadId)) ||
@@ -344,9 +347,10 @@ export function createAccountPoolPlugin(
         },
       ];
     });
-    bb.providers.experimental_contributeEnvHealth("acp-cursor", () =>
-      proxiedHealth("cursor"),
-    );
+      bb.providers.experimental_contributeEnvHealth(cursorProviderId, () =>
+        proxiedHealth("cursor"),
+      );
+    }
     for (const entry of openAiCompatibleRoutes) {
       for (const route of ["chat/completions", "responses", "models"]) {
         bb.http.route(
