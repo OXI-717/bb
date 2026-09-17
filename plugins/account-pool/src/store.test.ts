@@ -77,7 +77,10 @@ describe("AccountStore", () => {
     });
     const account = (
       label: string,
-    ): Omit<Account, "id" | "createdAt" | "lastUsedAt" | "lastUsedHostId"> => ({
+    ): Omit<
+      Account,
+      "id" | "createdAt" | "lastUsedAt" | "lastUsedHostId" | "role" | "cap"
+    > => ({
       provider: "claude",
       kind: "api-key",
       label,

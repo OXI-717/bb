@@ -1,16 +1,15 @@
 {
-  "name": "bb-plugin-account-pool",
+  "name": "bb-plugin-account-pool-balanced",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Routes Claude and Codex API traffic across provider account pools.",
   "engines": {
-    "bb": ">=0.0",
-    "bbPluginSdk": ">=0.4.90"
+    "bb": ">=0.0"
   },
   "bb": {
-    "name": "Account Pooler [Experimental]",
-    "description": "Routes Claude and Codex API traffic across provider account pools.",
+    "name": "Пул аккаунтов (balanced)",
+    "description": "Распределяет запросы Claude и Codex по пулу аккаунтов.",
     "branding": {
       "icon": "Layers"
     },

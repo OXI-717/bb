@@ -1,0 +1,254 @@
+import { z } from "zod";
+import type { AccountSecret } from "./contracts.js";
+import type { ProviderAdapter } from "./provider-adapter.js";
+import { filterRequestHeaders, mountedUpstreamUrl } from "./provider-adapter.js";
+import { isQuotaRejection, modelFamily, quotaFromHeaders } from "./quota.js";
+
+export const CURSOR_MOUNT_PREFIX = "cursor/";
+export const CURSOR_EXCHANGE_PATH = "auth/exchange_user_api_key";
+
+/** Paths the Cursor CLI calls, observed on a live run through a forwarding proxy.
+ *
+ * The plugin HTTP router matches paths exactly, so every path the CLI may call has to
+ * be mounted. A path missing here does not degrade gracefully: the machine gets a 404
+ * from the hub and Cursor looks broken for no visible reason.
+ */
+export const CURSOR_PROXIED_PATHS: readonly string[] = [
+  CURSOR_EXCHANGE_PATH,
+  "aiserver.v1.AiService/AvailableModels",
+  "aiserver.v1.AiService/GetUsableModels",
+  "aiserver.v1.AiService/NameAgent",
+  "aiserver.v1.AiService/GetDefaultModelForCli",
+  "aiserver.v1.AnalyticsService/BootstrapStatsig",
+  "aiserver.v1.AnalyticsService/TrackEvents",
+  "aiserver.v1.DashboardService/GetGlobalCommands",
+  "aiserver.v1.DashboardService/GetManagedSkills",
+  "aiserver.v1.DashboardService/GetMe",
+  "aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam",
+  "v1/traces",
+  "aiserver.v1.BidiService/BidiAppend",
+  "aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+  "aiserver.v1.DashboardService/GetPlanInfo",
+  "aiserver.v1.DashboardService/GetUserPrivacyMode",
+  "aiserver.v1.ServerConfigService/GetServerConfig",
+  "agent.v1.AgentService/Run",
+  "agent.v1.AgentService/RunSSE",
+  "agent.v1.AgentService/RunPoll",
+  "agent.v1.AgentService/GetUsableModels",
+  "v1/bundle/archive",
+  "settings",
+];
+
+const EXCHANGE_TIMEOUT_MS = 15_000;
+const TOKEN_EXPIRY_SAFETY_MS = 60_000;
+// `accept-encoding` is deliberately absent: the hub strips `content-encoding` from the
+// response it relays, so asking upstream to compress leaves the client decoding gzip it
+// was never told about — which surfaces as "[internal] Protocol error" mid-stream.
+const ALLOWED_REQUEST_HEADERS = new Set([
+  "accept",
+  "content-type",
+  // The body is relayed byte for byte, so whatever describes its encoding has to travel
+  // with it: dropping this header left Cursor parsing a gzipped Connect message as raw
+  // protobuf and answering "parse binary: illegal tag".
+  "content-encoding",
+  "user-agent",
+]);
+const ALLOWED_REQUEST_HEADER_PREFIXES = ["connect-", "x-cursor-", "x-request-id"];
+
+const exchangeResponseSchema = z
+  .object({
+    accessToken: z.string().min(1),
+    refreshToken: z.string().min(1).optional(),
+  })
+  .passthrough();
+
+interface MintedToken {
+  accessToken: string;
+  expiresAt: number | null;
+}
+
+/** `exp` of a JWT in epoch ms, or null when the token does not carry a readable one. */
+function tokenExpiry(token: string): number | null {
+  const payload = token.split(".")[1];
+  if (payload === undefined) return null;
+  try {
+    const padded = payload.padEnd(
+      payload.length + ((4 - (payload.length % 4)) % 4),
+      "=",
+    );
+    const claims: unknown = JSON.parse(
+      Buffer.from(padded, "base64url").toString("utf8"),
+    );
+    const exp =
+      typeof claims === "object" && claims !== null
+        ? (claims as { exp?: unknown }).exp
+        : undefined;
+    return typeof exp === "number" && Number.isFinite(exp) ? exp * 1_000 : null;
+  } catch {
+    return null;
+  }
+}
+
+const usageResponseSchema = z
+  .object({
+    billingCycleEnd: z.union([z.number(), z.string()]).nullish(),
+    planUsage: z
+      .object({ totalPercentUsed: z.union([z.number(), z.string()]).nullish() })
+      .passthrough()
+      .nullish(),
+  })
+  .passthrough();
+
+export function createCursorAdapter(options: {
+  exchangeUrl: string;
+  usageUrl: string;
+}): ProviderAdapter {
+  const minted = new Map<string, MintedToken>();
+
+  async function mint(
+    accountId: string,
+    apiKey: string,
+    fetchImpl: typeof fetch,
+    now: number,
+  ): Promise<string> {
+    const cached = minted.get(accountId);
+    if (
+      cached !== undefined &&
+      (cached.expiresAt === null || cached.expiresAt - TOKEN_EXPIRY_SAFETY_MS > now)
+    ) {
+      return cached.accessToken;
+    }
+    const response = await fetchImpl(options.exchangeUrl, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: "{}",
+      signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(
+        `Cursor rejected the pooled API key while minting an access token (http ${response.status}).`,
+      );
+    }
+    const parsed = exchangeResponseSchema.parse(await response.json());
+    // The refresh token stays here deliberately: the API key can mint a new access token
+    // at any time, so the hub never has to hand a renewable credential to a machine.
+    const token: MintedToken = {
+      accessToken: parsed.accessToken,
+      expiresAt: tokenExpiry(parsed.accessToken),
+    };
+    minted.set(accountId, token);
+    return token.accessToken;
+  }
+
+  return {
+    provider: "cursor",
+    upstreamName: "Cursor",
+    async importAccount() {
+      throw new Error(
+        "Cursor accounts carry no local login to import; add them with --api-key-stdin.",
+      );
+    },
+    parseRequest(body) {
+      // Cursor speaks Connect RPC with protobuf bodies. The hub routes by account, not by
+      // model, so the body is forwarded untouched rather than parsed.
+      return {
+        family: modelFamily(null),
+        affinityId: null,
+        parentAffinityId: null,
+        forAccount: () => body,
+      };
+    },
+    upstreamUrl: (request, settings) =>
+      mountedUpstreamUrl(
+        request,
+        settings.cursorUpstreamBaseUrl,
+        CURSOR_MOUNT_PREFIX,
+      ),
+    requestHeaders(inbound, _account, secret) {
+      const headers = filterRequestHeaders(
+        inbound,
+        ALLOWED_REQUEST_HEADERS,
+        ALLOWED_REQUEST_HEADER_PREFIXES,
+      );
+      if (secret.kind !== "oauth") {
+        throw new Error(
+          "Cursor requests require an access token minted from the pooled API key.",
+        );
+      }
+      headers.set("authorization", `Bearer ${secret.accessToken}`);
+      return headers;
+    },
+    quotaFromHeaders,
+    isQuotaRejection,
+    async refreshSecret(context) {
+      if (context.secret.kind !== "api-key") {
+        return { secret: context.secret, refreshed: false };
+      }
+      const accessToken = await mint(
+        context.account.id,
+        context.secret.apiKey,
+        context.fetch,
+        context.now(),
+      );
+      // Not persisted: the stored secret stays the API key, and this derived token lives
+      // only for the life of this request.
+      const secret: AccountSecret = {
+        kind: "oauth",
+        accessToken,
+        refreshToken: "",
+        expiresAt: null,
+      };
+      return { secret, refreshed: false };
+    },
+    refreshesApiKeyUsage: true,
+    async refreshUsage(context) {
+      // `freshSecret` already hands back a token minted from the pooled API key.
+      const secret = await context.freshSecret();
+      if (secret.kind !== "oauth") return;
+      const response = await context.fetch(options.usageUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${secret.accessToken}`,
+          "content-type": "application/json",
+          "connect-protocol-version": "1",
+          accept: "application/json",
+        },
+        body: "{}",
+        signal: AbortSignal.timeout(EXCHANGE_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        return;
+      }
+      const parsed = usageResponseSchema.safeParse(
+        await response.json().catch(() => null),
+      );
+      if (!parsed.success) return;
+      const used = Number(parsed.data.planUsage?.totalPercentUsed);
+      if (!Number.isFinite(used)) return;
+      const cycleEnd = Number(parsed.data.billingCycleEnd);
+      const previous = context.quotas.get(context.account.id);
+      context.quotas.put({
+        ...previous,
+        // Cursor meters one billing cycle rather than a rolling week; it lands in the
+        // long-window slot because that is the one the gate paces against.
+        sevenDayUtilization: Math.min(Math.max(used / 100, 0), 1),
+        sevenDayResetAt: Number.isFinite(cycleEnd) ? cycleEnd : null,
+        sevenDayStatus: null,
+        observedAt: context.now(),
+        error: null,
+      });
+    },
+    errorResponse(status, message, headers) {
+      return Response.json({ error: { message, code: status } }, {
+        status,
+        headers,
+      });
+    },
+  };
+}

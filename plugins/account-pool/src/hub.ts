@@ -7,12 +7,24 @@ import type {
   PoolProvider,
   PoolStatus,
 } from "./contracts.js";
+import { providerSchema } from "./contracts.js";
 import { createClaudeAdapter } from "./claude-adapter.js";
 import {
   createCodexAdapter,
   DEFAULT_CODEX_REFRESH_URL,
   DEFAULT_CODEX_USAGE_URL,
 } from "./codex-adapter.js";
+import { createCursorAdapter } from "./cursor-adapter.js";
+import { createKimiAdapter } from "./kimi-adapter.js";
+import {
+  createOpenAiCompatibleAdapter,
+  OPENCODE_GO_MOUNT_PREFIX,
+  ZAI_MOUNT_PREFIX,
+} from "./openai-compatible-adapter.js";
+import {
+  opencodeGoQuotaFromUsages,
+  zaiQuotaFromUsages,
+} from "./openai-compatible-usage.js";
 import type { ProviderAdapter } from "./provider-adapter.js";
 import type { ImportedProviderAccount } from "./provider-adapter.js";
 import { TransientOAuthRefreshError } from "./provider-adapter.js";
@@ -20,6 +32,13 @@ import type {
   ImportedClaudeCredentials,
   ImportedCodexCredentials,
 } from "./credentials.js";
+import {
+  capLimit,
+  drainOpensAt,
+  gateMembership,
+  rankByBalance,
+  weeklyUtilization,
+} from "./balancer.js";
 import {
   accountStatus,
   blockingResetAt,
@@ -35,12 +54,18 @@ import type {
   PoolAffinityStore,
   QuotaStore,
 } from "./store.js";
-import { parentRequestHeaders, type ParentPool } from "./parent-pool.js";
 
-const ROUTE = "/api/v1/plugins/account-pool/http";
 const DEFAULT_REFRESH_URL = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const DEFAULT_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+const DEFAULT_KIMI_USAGES_URL = "https://api.kimi.com/coding/v1/usages";
+const DEFAULT_ZAI_USAGES_URL =
+  "https://api.z.ai/api/monitor/usage/quota/limit";
+const DEFAULT_OPENCODE_GO_USAGES_URL = "https://opencode.ai/zen/go/v1/usage";
+const DEFAULT_CURSOR_EXCHANGE_URL =
+  "https://api2.cursor.sh/auth/exchange_user_api_key";
+const DEFAULT_CURSOR_USAGE_URL =
+  "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 5 * 60 * 1_000;
 const MAX_INLINE_HOLD_MS = 20_000;
 const MAX_REFRESH_BACKOFF_MS = 60_000;
@@ -63,6 +88,7 @@ const DROPPED_RESPONSE_HEADERS = new Set([
 ]);
 
 interface HubOptions {
+  route: string;
   accounts: AccountStore;
   quotas: QuotaStore;
   affinity: PoolAffinityStore;
@@ -73,7 +99,6 @@ interface HubOptions {
   fetch: typeof fetch;
   now: () => number;
   drainTimeoutMs: number;
-  getParentRoute: () => ParentPool | null;
   onAccountsChanged: () => void;
   onUpstreamError: (provider: PoolProvider, error: unknown) => void;
 }
@@ -159,10 +184,15 @@ export class AccountPoolHub {
     await this.stop();
   }
 
-  async authenticate(request: Request): Promise<string | null> {
+  async authenticate(
+    request: Request,
+    adapter?: ProviderAdapter,
+  ): Promise<string | null> {
     const token =
       request.headers.get("x-bb-account-pool-token") ??
-      readBearer(request.headers.get("authorization"));
+      readBearer(request.headers.get("authorization")) ??
+      adapter?.inboundToken?.(request.headers) ??
+      null;
     return this.options.hubTokens.authenticate(token);
   }
 
@@ -172,13 +202,9 @@ export class AccountPoolHub {
     return this.adapter(provider).importAccount();
   }
 
-  async handle(
-    request: Request,
-    provider: PoolProvider,
-    routePath: string,
-  ): Promise<Response> {
+  async handle(request: Request, provider: PoolProvider): Promise<Response> {
     const adapter = this.adapter(provider);
-    const hostId = await this.authenticate(request);
+    const hostId = await this.authenticate(request, adapter);
     if (hostId === null) {
       return adapter.errorResponse(401, "Invalid Account Pooler bearer token.");
     }
@@ -187,10 +213,6 @@ export class AccountPoolHub {
         503,
         "Account Pooler is not accepting requests.",
       );
-    const parent = this.options.getParentRoute();
-    if (parent !== null) {
-      return this.forwardToParent(request, adapter, routePath, parent);
-    }
     return this.forward(
       request,
       new Uint8Array(await request.arrayBuffer()),
@@ -199,80 +221,12 @@ export class AccountPoolHub {
     );
   }
 
-  private trackRequest(
-    request: Request,
-    onRelease?: () => void,
-  ): { controller: AbortController; release: () => void } {
-    const controller = new AbortController();
-    const abortFromRequest = () => controller.abort(request.signal.reason);
-    this.activeControllers.add(controller);
-    if (request.signal.aborted) abortFromRequest();
-    else
-      request.signal.addEventListener("abort", abortFromRequest, {
-        once: true,
-      });
-    let released = false;
-    return {
-      controller,
-      release: () => {
-        if (released) return;
-        released = true;
-        request.signal.removeEventListener("abort", abortFromRequest);
-        this.activeControllers.delete(controller);
-        onRelease?.();
-      },
-    };
-  }
-
-  private async forwardToParent(
-    request: Request,
-    adapter: ProviderAdapter,
-    routePath: string,
-    parent: ParentPool,
-  ): Promise<Response> {
-    const { controller, release } = this.trackRequest(request);
-    try {
-      const search = new URL(request.url).search;
-      const body =
-        request.method === "GET" || request.method === "HEAD"
-          ? undefined
-          : await request.arrayBuffer();
-      const response = await this.options
-        .fetch(`${parent.baseUrl}${routePath}${search}`, {
-          method: request.method,
-          headers: parentRequestHeaders(request.headers, parent.token),
-          ...(body === undefined ? {} : { body }),
-          signal: controller.signal,
-        })
-        .catch((cause: unknown) => {
-          if (!controller.signal.aborted)
-            this.options.onUpstreamError(adapter.provider, cause);
-          throw new UpstreamConnectionError("Parent pool unreachable.", {
-            cause,
-          });
-        });
-      return this.clientResponse({ response, controller, release });
-    } catch (error) {
-      release();
-      if (request.signal.aborted)
-        return adapter.errorResponse(
-          499,
-          "Account Pooler request was canceled.",
-        );
-      if (error instanceof UpstreamConnectionError)
-        return adapter.errorResponse(
-          502,
-          "Account Pooler could not reach the parent pool.",
-        );
-      throw error;
-    }
-  }
-
   async refreshUsage(accountId?: string, force = false): Promise<void> {
     const accounts = (await this.options.accounts.list()).filter(
       (account) =>
         account.enabled &&
-        account.kind === "oauth" &&
+        (account.kind === "oauth" ||
+          this.adapter(account.provider).refreshesApiKeyUsage === true) &&
         (accountId === undefined || account.id === accountId),
     );
     await Promise.all(
@@ -335,26 +289,64 @@ export class AccountPoolHub {
     }
   }
 
-  async status(): Promise<Omit<PoolStatus, "routing" | "parent">> {
+  async status(): Promise<Omit<PoolStatus, "routing">> {
     const settings = this.options.getSettings();
     const now = this.options.now();
     const accounts = (await this.options.accounts.list()).sort(
       (left, right) => left.priority - right.priority,
     );
+    const workWeek = {
+      restDays: settings.restDays,
+      offsetMinutes: -new Date(now).getTimezoneOffset(),
+    };
+    const drainMs = settings.reserveDrainHours * 60 * 60 * 1_000;
+    const eligibleIds = new Set<string>();
+    for (const provider of providerSchema.options) {
+      const entries = accounts
+        .filter(
+          (account) => account.provider === provider && account.enabled,
+        )
+        .map((account) => ({
+          account,
+          quota: this.options.quotas.get(account.id),
+        }))
+        .filter(({ quota }) => quota.error === null)
+        .filter(
+          ({ quota }) =>
+            !isSharedQuotaExhausted(quota, settings.switchThreshold, now),
+        );
+      for (const entry of gateMembership(entries, now, drainMs, workWeek))
+        eligibleIds.add(entry.account.id);
+    }
     return {
-      route: ROUTE,
+      route: this.options.route,
       enabledAccountCount: accounts.filter((account) => account.enabled).length,
       inFlight: this.inFlightCount(),
       accepting: this.accepting,
       hosts: await this.options.hubTokens.list(),
+      activeAccounts: {
+        claude: this.activeAccounts.get("claude")?.accountId ?? null,
+        codex: this.activeAccounts.get("codex")?.accountId ?? null,
+        kimi: this.activeAccounts.get("kimi")?.accountId ?? null,
+        zai: this.activeAccounts.get("zai")?.accountId ?? null,
+        "opencode-go":
+          this.activeAccounts.get("opencode-go")?.accountId ?? null,
+        cursor: this.activeAccounts.get("cursor")?.accountId ?? null,
+      },
       accounts: accounts.map((account) => {
         const quota = this.options.quotas.get(account.id);
         const { accountId: _accountId, ...quotaFields } = quota;
+        const limit = capLimit(account, quota, now, workWeek);
         return {
           ...account,
           lastUsedHostName: null,
           ...quotaFields,
           inFlight: this.inFlightByAccount.get(account.id) ?? 0,
+          capLimit: limit,
+          eligible: eligibleIds.has(account.id),
+          drainOpensAt: drainOpensAt(quota, now, drainMs, workWeek),
+          capReached:
+            limit !== null && (weeklyUtilization(quota, now) ?? 0) >= limit,
           status: accountStatus(account, quota, settings.switchThreshold, now),
         };
       }),
@@ -754,15 +746,26 @@ export class AccountPoolHub {
     );
     signal.throwIfAborted();
     const now = this.options.now();
-    const threshold = this.options.getSettings().switchThreshold;
-    const available = accounts
-      .filter((account) => account.provider === provider && account.enabled)
-      .map((account) => ({
-        account,
-        quota: this.options.quotas.get(account.id),
-      }))
-      .filter(({ quota }) => quota.error === null)
-      .filter(({ quota }) => !isSharedQuotaExhausted(quota, threshold, now));
+    const settings = this.options.getSettings();
+    const threshold = settings.switchThreshold;
+    const balanced = settings.routingStrategy === "balanced";
+    const workWeek = {
+      restDays: settings.restDays,
+      offsetMinutes: -new Date(now).getTimezoneOffset(),
+    };
+    const available = gateMembership(
+      accounts
+        .filter((account) => account.provider === provider && account.enabled)
+        .map((account) => ({
+          account,
+          quota: this.options.quotas.get(account.id),
+        }))
+        .filter(({ quota }) => quota.error === null)
+        .filter(({ quota }) => !isSharedQuotaExhausted(quota, threshold, now)),
+      now,
+      settings.reserveDrainHours * 60 * 60 * 1_000,
+      workWeek,
+    );
     const eligible = available.filter(
       ({ quota }) => !isQuotaExhausted(quota, family, threshold, now),
     );
@@ -807,16 +810,24 @@ export class AccountPoolHub {
       ...accounts.slice(anchorIndex + 1),
       ...accounts.slice(0, anchorIndex + 1),
     ];
-    const next = ordered
-      .map((account) =>
-        candidates.find((candidate) => candidate.account.id === account.id),
-      )
-      .find((candidate) => candidate !== undefined);
+    const next = balanced
+      ? rankByBalance(
+          candidates,
+          (accountId) => this.inFlightByAccount.get(accountId) ?? 0,
+          now,
+          workWeek,
+        )[0]
+      : ordered
+          .map((account) =>
+            candidates.find((candidate) => candidate.account.id === account.id),
+          )
+          .find((candidate) => candidate !== undefined);
     const selected =
       bound !== undefined && unattempted.includes(bound)
         ? bound
         : (inherited ??
-          (boundAccountId === null &&
+          (!balanced &&
+          boundAccountId === null &&
           previousAccountId === null &&
           activeAccount !== undefined &&
           unattempted.includes(activeAccount)
@@ -1038,10 +1049,23 @@ export class AccountPoolHub {
     secret: AccountSecret,
     adapter: ProviderAdapter,
   ): Promise<UpstreamResult> {
+    const controller = new AbortController();
+    const abortFromRequest = () => controller.abort(request.signal.reason);
+    this.activeControllers.add(controller);
     this.increment(account.id);
-    const { controller, release } = this.trackRequest(request, () =>
-      this.decrement(account.id),
-    );
+    if (request.signal.aborted) abortFromRequest();
+    else
+      request.signal.addEventListener("abort", abortFromRequest, {
+        once: true,
+      });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      request.signal.removeEventListener("abort", abortFromRequest);
+      this.activeControllers.delete(controller);
+      this.decrement(account.id);
+    };
     try {
       const upstreamBody = new ArrayBuffer(body.byteLength);
       new Uint8Array(upstreamBody).set(body);
@@ -1156,14 +1180,16 @@ export class AccountPoolHub {
         return resetAt > now ? [resetAt] : [];
       })
       .sort((left, right) => left - right)[0];
-    const retryAfter = Math.max(
-      1,
-      Math.ceil(((next ?? now + 1_000) - now) / 1_000),
-    );
+    // A refusal, not a rate limit with a hint to wait: short pacing has already been sat
+    // out by the selector, so anything reaching here needs a decision from the caller. A
+    // 429 carrying `retry-after` was worse than useless — coding agents honour it in
+    // silence, and an exhausted weekly quota looked like a hang with no error at all.
+    const resetAt = next === undefined ? null : new Date(next).toISOString();
     return adapter.errorResponse(
-      429,
-      "No Account Pooler account is currently eligible.",
-      { "retry-after": String(retryAfter) },
+      403,
+      resetAt === null
+        ? "Every Account Pooler account for this provider is exhausted."
+        : `Every Account Pooler account for this provider is exhausted until ${resetAt}.`,
     );
   }
 
@@ -1208,6 +1234,7 @@ export class AccountPoolHub {
 }
 
 export function createHub(options: {
+  route: string;
   accounts: AccountStore;
   quotas: QuotaStore;
   affinity: PoolAffinityStore;
@@ -1220,11 +1247,15 @@ export function createHub(options: {
   codexUsageUrl?: string;
   importClaudeCredentials?: () => Promise<ImportedClaudeCredentials>;
   importCodexCredentials?: () => Promise<ImportedCodexCredentials>;
+  kimiUsagesUrl?: string;
+  zaiUsagesUrl?: string;
+  opencodeGoUsagesUrl?: string;
+  cursorExchangeUrl?: string;
+  cursorUsageUrl?: string;
   usageUrl?: string;
   profileUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
-  getParentRoute?: () => ParentPool | null;
   onAccountsChanged?: () => void;
   onUpstreamError?: (provider: PoolProvider, error: unknown) => void;
 }): AccountPoolHub {
@@ -1246,8 +1277,46 @@ export function createHub(options: {
         importCredentials: options.importCodexCredentials,
       }),
     ],
+    [
+      "kimi",
+      createKimiAdapter({
+        usagesUrl: options.kimiUsagesUrl ?? DEFAULT_KIMI_USAGES_URL,
+      }),
+    ],
+    [
+      "zai",
+      createOpenAiCompatibleAdapter({
+        provider: "zai",
+        upstreamName: "Z.ai Coding Plan",
+        mountPrefix: ZAI_MOUNT_PREFIX,
+        upstreamBaseUrl: (settings) => settings.zaiUpstreamBaseUrl,
+        usagesUrl: options.zaiUsagesUrl ?? DEFAULT_ZAI_USAGES_URL,
+        parseUsages: zaiQuotaFromUsages,
+      }),
+    ],
+    [
+      "opencode-go",
+      createOpenAiCompatibleAdapter({
+        provider: "opencode-go",
+        upstreamName: "OpenCode Go",
+        mountPrefix: OPENCODE_GO_MOUNT_PREFIX,
+        upstreamBaseUrl: (settings) => settings.opencodeGoUpstreamBaseUrl,
+        usagesUrl:
+          options.opencodeGoUsagesUrl ?? DEFAULT_OPENCODE_GO_USAGES_URL,
+        allowedHeaderPrefixes: ["x-opencode-"],
+        parseUsages: opencodeGoQuotaFromUsages,
+      }),
+    ],
+    [
+      "cursor",
+      createCursorAdapter({
+        exchangeUrl: options.cursorExchangeUrl ?? DEFAULT_CURSOR_EXCHANGE_URL,
+        usageUrl: options.cursorUsageUrl ?? DEFAULT_CURSOR_USAGE_URL,
+      }),
+    ],
   ]);
   return new AccountPoolHub({
+    route: options.route,
     accounts: options.accounts,
     quotas: options.quotas,
     affinity: options.affinity,
@@ -1258,7 +1327,6 @@ export function createHub(options: {
     fetch: options.fetch ?? fetch,
     now: options.now ?? Date.now,
     drainTimeoutMs: options.drainTimeoutMs ?? 60_000,
-    getParentRoute: options.getParentRoute ?? (() => null),
     onAccountsChanged: options.onAccountsChanged ?? (() => {}),
     onUpstreamError: options.onUpstreamError ?? (() => {}),
   });

@@ -2,7 +2,9 @@ import type { BbPluginApi, PluginCliResult } from "@get-bb/plugin-sdk";
 import { setTimeout as wait } from "node:timers/promises";
 import {
   accountAddInputSchema,
+  accountCapInputSchema,
   accountIdInputSchema,
+  accountRoleInputSchema,
   accountPriorityInputSchema,
   accountReorderInputSchema,
   accountPoolConfigSetInputSchema,
@@ -10,7 +12,6 @@ import {
   codexLoginPollInputSchema,
   loginCompleteInputSchema,
   modelFamilySchema,
-  parentModeSchema,
   tokenRotateInputSchema,
   routingSetInputSchema,
   type AccountPoolConfig,
@@ -20,7 +21,6 @@ import {
   type FamilyQuota,
   type LimitWindow,
   type ModelFamily,
-  type PoolStatus,
   type PoolStatusReport,
 } from "./contracts.js";
 import type { PoolOperations } from "./operations.js";
@@ -41,24 +41,26 @@ const HELP = [
   "  bb pool account login-poll --session <id>",
   "  printf '%s\\n' \"$CLAUDE_AUTH_CODE\" | bb pool account login-complete --session <id> --code-stdin",
   "  bb pool account add --provider claude --api-key-stdin [--label <text>] [--priority <n>]",
+  "  bb pool account add --provider <kimi|zai|opencode-go|cursor> --api-key-stdin [--label <text>] [--priority <n>]",
   "  bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]  Unsafe: exposes the key in process arguments.",
   "  bb pool account list [--json]",
   "  bb pool account remove <id>",
   "  bb pool account enable <id>",
   "  bb pool account disable <id>",
   "  bb pool account priority <id> <n>",
-  "  bb pool account reorder <claude|codex> <id>...",
+  "  bb pool account role <id> <primary|reserve>",
+  "  bb pool account cap <id> <early> <late>",
+  "  bb pool account cap <id> off",
+  "  bb pool account reorder <claude|codex|kimi|zai|opencode-go|cursor> <id>...",
   "  bb pool account refresh <id>",
   "  bb pool status [--json]",
-  "  bb pool routing <claude|codex> [--off]",
+  "  bb pool routing <claude|codex|kimi|zai|opencode-go|cursor> [--off]",
   "  bb pool config",
-  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode> <value>",
-  "  bb pool parent [proxy|isolate]",
+  "  bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|kimiUpstreamBaseUrl|zaiUpstreamBaseUrl|opencodeGoUpstreamBaseUrl|cursorUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
   "  bb pool token rotate --machine <id-or-name>",
   "  bb pool bypass <thread-id> [--off]",
   "",
   "Accounts run sequentially by priority, then order added. The current fallback stays active until unavailable.",
-  "When this bb server runs inside another bb server's thread, parent proxy routes its pooled traffic through that parent; isolate neutralises the inherited routing.",
   "Reorder includes every account for the provider and changes the next failover sequence; existing conversations stay pinned.",
 ].join("\n");
 
@@ -148,6 +150,8 @@ function formatAccounts(accounts: readonly AccountSummary[]): string {
       "Kind",
       "Enabled",
       "Priority",
+      "Role",
+      "Cap",
       "5h",
       "5h reset",
       "7d",
@@ -165,6 +169,8 @@ function formatAccounts(accounts: readonly AccountSummary[]): string {
         account.kind,
         String(account.enabled),
         String(account.priority),
+        account.role,
+        formatCap(account.cap),
         formatUtilization(account.fiveHourUtilization),
         formatReset(account.fiveHourResetAt),
         formatUtilization(account.sevenDayUtilization),
@@ -210,21 +216,21 @@ function formatConfig(config: AccountPoolConfig): string {
   return [
     `anthropicUpstreamBaseUrl: ${config.anthropicUpstreamBaseUrl}`,
     `codexUpstreamBaseUrl: ${config.codexUpstreamBaseUrl}`,
+    `kimiUpstreamBaseUrl: ${config.kimiUpstreamBaseUrl}`,
+    `zaiUpstreamBaseUrl: ${config.zaiUpstreamBaseUrl}`,
+    `opencodeGoUpstreamBaseUrl: ${config.opencodeGoUpstreamBaseUrl}`,
+    `cursorUpstreamBaseUrl: ${config.cursorUpstreamBaseUrl}`,
     `switchThreshold: ${config.switchThreshold}`,
-    `parentMode: ${config.parentMode}`,
+    `routingStrategy: ${config.routingStrategy}`,
+    `reserveDrainHours: ${config.reserveDrainHours}`,
+    `restDays: ${config.restDays.length === 0 ? "none" : config.restDays.join(",")}`,
   ].join("\n");
 }
 
-function formatParent(parent: PoolStatus["parent"]): string {
-  if (parent === null) {
-    return "No parent bb server Account Pooler was detected for this instance.";
-  }
-  return [
-    `parent: ${parent.baseUrl}`,
-    `mode: ${parent.mode}`,
-    `parentServes.claude: ${parent.availability.claude}`,
-    `parentServes.codex: ${parent.availability.codex}`,
-  ].join("\n");
+function formatCap(cap: AccountSummary["cap"]): string {
+  return cap === null
+    ? "-"
+    : `${formatUtilization(cap.early)}->${formatUtilization(cap.late)}`;
 }
 
 function parseConfigUpdate(
@@ -242,16 +248,49 @@ function parseConfigUpdate(
       codexUpstreamBaseUrl: value,
     });
   }
+  if (key === "kimiUpstreamBaseUrl") {
+    return accountPoolConfigSetInputSchema.parse({
+      kimiUpstreamBaseUrl: value,
+    });
+  }
+  if (key === "zaiUpstreamBaseUrl") {
+    return accountPoolConfigSetInputSchema.parse({
+      zaiUpstreamBaseUrl: value,
+    });
+  }
+  if (key === "opencodeGoUpstreamBaseUrl") {
+    return accountPoolConfigSetInputSchema.parse({
+      opencodeGoUpstreamBaseUrl: value,
+    });
+  }
+  if (key === "cursorUpstreamBaseUrl") {
+    return accountPoolConfigSetInputSchema.parse({
+      cursorUpstreamBaseUrl: value,
+    });
+  }
   if (key === "switchThreshold") {
     return accountPoolConfigSetInputSchema.parse({
       switchThreshold: Number(value),
     });
   }
-  if (key === "parentMode") {
-    return accountPoolConfigSetInputSchema.parse({ parentMode: value });
+  if (key === "routingStrategy") {
+    return accountPoolConfigSetInputSchema.parse({ routingStrategy: value });
+  }
+  if (key === "reserveDrainHours") {
+    return accountPoolConfigSetInputSchema.parse({
+      reserveDrainHours: Number(value),
+    });
+  }
+  if (key === "restDays") {
+    return accountPoolConfigSetInputSchema.parse({
+      restDays:
+        value === "none"
+          ? []
+          : value.split(",").map((day) => (day.trim() === "" ? NaN : Number(day))),
+    });
   }
   throw new Error(
-    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, switchThreshold, or parentMode.",
+    "Config key must be anthropicUpstreamBaseUrl, codexUpstreamBaseUrl, kimiUpstreamBaseUrl, zaiUpstreamBaseUrl, opencodeGoUpstreamBaseUrl, cursorUpstreamBaseUrl, switchThreshold, routingStrategy, reserveDrainHours, or restDays.",
   );
 }
 
@@ -276,7 +315,7 @@ export function registerPoolCli(
         summary:
           "Sign in to Claude or Codex, import credentials, or add an Anthropic API key",
         usage:
-          "bb pool account add --provider <claude|codex> --login\nbb pool account add --provider <claude|codex> --import [--label <text>] [--priority <n>]\nbb pool account add --provider claude --api-key-stdin [--label <text>] [--priority <n>]\nUnsafe compatibility form: bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]",
+          "bb pool account add --provider <claude|codex> --login\nbb pool account add --provider <claude|codex> --import [--label <text>] [--priority <n>]\nbb pool account add --provider <claude|kimi> --api-key-stdin [--label <text>] [--priority <n>]\nUnsafe compatibility form: bb pool account add --provider claude --api-key <key> [--label <text>] [--priority <n>]",
       },
       {
         name: "account-login-poll",
@@ -317,7 +356,7 @@ export function registerPoolCli(
       {
         name: "account-reorder",
         summary: "Set the complete failover order for one provider",
-        usage: "bb pool account reorder <claude|codex> <id>...",
+        usage: "bb pool account reorder <claude|codex|kimi|zai|opencode-go|cursor> <id>...",
       },
       {
         name: "account-refresh",
@@ -332,7 +371,7 @@ export function registerPoolCli(
       {
         name: "routing",
         summary: "Enable or disable pooled routing for one provider",
-        usage: "bb pool routing <claude|codex> [--off]",
+        usage: "bb pool routing <claude|codex|kimi|zai|opencode-go|cursor> [--off]",
       },
       {
         name: "config",
@@ -343,13 +382,7 @@ export function registerPoolCli(
         name: "config-set",
         summary: "Update one Account Pooler routing configuration value",
         usage:
-          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode> <value>",
-      },
-      {
-        name: "parent",
-        summary:
-          "Show or set how this instance uses a parent bb server's Account Pooler",
-        usage: "bb pool parent [proxy|isolate]",
+          "bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|kimiUpstreamBaseUrl|zaiUpstreamBaseUrl|opencodeGoUpstreamBaseUrl|cursorUpstreamBaseUrl|switchThreshold|routingStrategy|reserveDrainHours|restDays> <value>",
       },
       {
         name: "token-rotate",
@@ -382,6 +415,39 @@ export function registerPoolCli(
           return {
             exitCode: 0,
             stdout: `Set ${account.label} priority to ${account.priority}.\n`,
+          };
+        }
+        if (argv[0] === "account" && argv[1] === "role") {
+          if (argv.length !== 4) throw new Error(HELP);
+          const input = accountRoleInputSchema.parse({
+            accountId: argv[2],
+            role: argv[3],
+          });
+          const account = await operations.setRole(input.accountId, input.role);
+          if (account === null) throw new Error("Account not found.");
+          return {
+            exitCode: 0,
+            stdout: `Set ${account.label} role to ${account.role}.\n`,
+          };
+        }
+        if (argv[0] === "account" && argv[1] === "cap") {
+          const off = argv.length === 4 && argv[3] === "off";
+          if (
+            !off &&
+            (argv.length !== 5 ||
+              argv[3]?.trim() === "" ||
+              argv[4]?.trim() === "")
+          )
+            throw new Error(HELP);
+          const input = accountCapInputSchema.parse({
+            accountId: argv[2],
+            cap: off ? null : { early: Number(argv[3]), late: Number(argv[4]) },
+          });
+          const account = await operations.setCap(input.accountId, input.cap);
+          if (account === null) throw new Error("Account not found.");
+          return {
+            exitCode: 0,
+            stdout: `Set ${account.label} cap to ${formatCap(account.cap)}.\n`,
           };
         }
         if (argv[0] === "account" && argv[1] === "reorder") {
@@ -466,8 +532,11 @@ export function registerPoolCli(
               "--api-key-stdin must be invoked through the bb CLI so it can read stdin safely.",
             );
           }
-          if (!imported && flags.values.get("provider") !== "claude") {
-            throw new Error("Anthropic API keys require --provider claude.");
+          if (
+            !imported &&
+            flags.values.get("provider") === "codex"
+          ) {
+            throw new Error("Codex accounts can only be added with --import.");
           }
           const priorityText = flags.values.get("priority") ?? "100";
           const input = accountAddInputSchema.parse({
@@ -612,19 +681,6 @@ export function registerPoolCli(
           if (argv.length !== 4) throw new Error(HELP);
           const next = await config.set(parseConfigUpdate(argv[2], argv[3]));
           return { exitCode: 0, stdout: `${formatConfig(next)}\n` };
-        }
-        if (argv[0] === "parent") {
-          if (argv.length === 1) {
-            const status = await operations.status();
-            return { exitCode: 0, stdout: `${formatParent(status.parent)}\n` };
-          }
-          if (argv.length !== 2) throw new Error(HELP);
-          const parentMode = parentModeSchema.parse(argv[1]);
-          const next = await config.set({ parentMode });
-          return {
-            exitCode: 0,
-            stdout: `Set the Account Pooler parent mode to ${next.parentMode}.\n`,
-          };
         }
         if (argv[0] === "token" && argv[1] === "rotate") {
           const flags = parseFlags(argv.slice(2), [], ["machine"]);

@@ -339,6 +339,8 @@ describe("requestHeaders", () => {
         createdAt: 0,
         lastUsedAt: null,
         lastUsedHostId: null,
+        role: "primary",
+        cap: null,
       },
       {
         kind: "oauth",

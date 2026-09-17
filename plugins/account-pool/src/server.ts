@@ -1,4 +1,3 @@
-import { registerUsageSource } from "./usage-source.js";
 import {
   createUpstreamTransport,
   transportErrorCode,
@@ -9,24 +8,24 @@ import { registerPoolCli } from "./cli.js";
 import {
   accountPoolConfigSchema,
   accountPoolConfigSetInputSchema,
-  poolAvailabilitySchema,
   type AccountPoolConfigController,
   type PoolProvider,
-  type PoolStatus,
 } from "./contracts.js";
-import {
-  AVAILABILITY_PATH,
-  PARENT_TOKEN_ENV,
-  PARENT_URL_ENV,
-  ParentAvailability,
-  readParentPool,
-  type ParentPool,
-} from "./parent-pool.js";
 import type {
   ImportedClaudeCredentials,
   ImportedCodexCredentials,
 } from "./credentials.js";
 import { createHub } from "./hub.js";
+import {
+  CURSOR_EXCHANGE_PATH,
+  CURSOR_MOUNT_PREFIX,
+  CURSOR_PROXIED_PATHS,
+} from "./cursor-adapter.js";
+import { KIMI_MOUNT_PREFIX } from "./kimi-adapter.js";
+import {
+  OPENCODE_GO_MOUNT_PREFIX,
+  ZAI_MOUNT_PREFIX,
+} from "./openai-compatible-adapter.js";
 import { PoolOperations } from "./operations.js";
 import { accountPoolRpcContract, createRpcHandlers } from "./rpc.js";
 import { ClaudeOAuthLogin } from "./oauth-login.js";
@@ -47,11 +46,14 @@ import {
 export interface AccountPoolPluginOptions {
   fetch?: typeof fetch;
   now?: () => number;
-  env?: NodeJS.ProcessEnv;
-  availabilityTtlMs?: number;
   refreshUrl?: string;
   codexRefreshUrl?: string;
   codexUsageUrl?: string;
+  kimiUsagesUrl?: string;
+  zaiUsagesUrl?: string;
+  opencodeGoUsagesUrl?: string;
+  cursorExchangeUrl?: string;
+  cursorUsageUrl?: string;
   usageUrl?: string;
   drainTimeoutMs?: number;
   maxAffinityBindings?: number;
@@ -66,17 +68,8 @@ export interface AccountPoolPluginOptions {
 
 const DISPOSE_INSPECTION_TIMEOUT_MS = 2_000;
 const DISPOSE_INSPECTION_TIMEOUT = Symbol("dispose-inspection-timeout");
-const HUB_BASE_PATH = "/api/v1/plugins/account-pool/http";
-
-const PROVIDER_ROUTING_ENV: Record<PoolProvider, readonly string[]> = {
-  claude: ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"],
-  codex: ["CODEX_OPENAI_BASE_URL", "CODEX_POOL_AUTH_TOKEN"],
-};
-
-interface PoolEnvEntry {
-  name: string;
-  value: string | { serverPath: string };
-  reason: string;
+function hubBasePath(pluginId: string): string {
+  return `/api/v1/plugins/${pluginId}/http`;
 }
 
 export function helloResponse(): Response {
@@ -119,11 +112,6 @@ export function createAccountPoolPlugin(
     const enrolledHosts = await bb.sdk.hosts.list();
     await hubTokens.prune(enrolledHosts.map((host) => host.id));
     const routing = new RoutingStore(bb.storage.kv, now);
-    const parentPool = readParentPool(options.env ?? process.env);
-    const proxyingParent = (): ParentPool | null =>
-      parentPool !== null && currentSettings.parentMode === "proxy"
-        ? parentPool
-        : null;
     const db = bb.storage.database();
     bb.storage.migrate(db, QUOTA_MIGRATIONS);
     const quotas = new QuotaStore(db);
@@ -131,6 +119,7 @@ export function createAccountPoolPlugin(
       options.fetch === undefined ? createUpstreamTransport() : null;
     const upstreamFetch = options.fetch ?? transport?.fetch;
     const hub = createHub({
+      route: hubBasePath(bb.pluginId),
       accounts,
       quotas,
       affinity: new PoolAffinityStore(db),
@@ -141,13 +130,17 @@ export function createAccountPoolPlugin(
       refreshUrl: options.refreshUrl,
       codexRefreshUrl: options.codexRefreshUrl,
       codexUsageUrl: options.codexUsageUrl,
+      kimiUsagesUrl: options.kimiUsagesUrl,
+      zaiUsagesUrl: options.zaiUsagesUrl,
+      opencodeGoUsagesUrl: options.opencodeGoUsagesUrl,
+      cursorExchangeUrl: options.cursorExchangeUrl,
+      cursorUsageUrl: options.cursorUsageUrl,
       usageUrl: options.usageUrl,
       profileUrl: options.oauthProfileUrl,
       importClaudeCredentials: options.importCredentials,
       importCodexCredentials: options.importCodexCredentials,
       drainTimeoutMs: options.drainTimeoutMs,
       maxAffinityBindings: options.maxAffinityBindings,
-      getParentRoute: proxyingParent,
       onUpstreamError: (provider, error) =>
         bb.log.warn(
           `Account Pooler ${provider} transport failed: ${transportErrorCode(error)}.`,
@@ -161,29 +154,6 @@ export function createAccountPoolPlugin(
         await transport.destroy();
       });
     }
-    const availability =
-      parentPool === null
-        ? null
-        : new ParentAvailability({
-            parent: parentPool,
-            fetch: upstreamFetch ?? fetch,
-            now,
-            ...(options.availabilityTtlMs === undefined
-              ? {}
-              : { ttlMs: options.availabilityTtlMs }),
-            onError: (error) =>
-              bb.log.warn(
-                `Account Pooler could not read parent availability: ${error instanceof Error ? error.message : String(error)}.`,
-              ),
-          });
-    const parentStatus = async (): Promise<PoolStatus["parent"]> =>
-      parentPool === null || availability === null
-        ? null
-        : {
-            baseUrl: parentPool.baseUrl,
-            mode: currentSettings.parentMode,
-            availability: await availability.get(),
-          };
     const operations = new PoolOperations(
       accounts,
       quotas,
@@ -196,7 +166,6 @@ export function createAccountPoolPlugin(
       now,
       () => bb.realtime.publish(ACCOUNT_POOL_ACCOUNTS_CHANGED, {}),
       (accountId) => hub.refreshUsage(accountId, true),
-      parentStatus,
     );
     const login = new ClaudeOAuthLogin({
       fetch: upstreamFetch,
@@ -217,67 +186,34 @@ export function createAccountPoolPlugin(
         "Add and enable a Claude or Codex account with `bb pool account add`.",
       );
     }
-    registerUsageSource(bb, hub);
     bb.rpc.register(
       accountPoolRpcContract,
       createRpcHandlers(operations, login, codexLogin, config),
     );
     registerPoolCli(bb, operations, login, codexLogin, config);
-    const canServe = async (provider: PoolProvider): Promise<boolean> => {
-      if (!(await operations.isRoutingEnabled(provider))) return false;
-      if (proxyingParent() !== null && availability !== null) {
-        return (await availability.get())[provider];
-      }
-      return operations.hasUsableEnabledAccount(provider);
-    };
-    const markerEntries = (token: string): PoolEnvEntry[] => [
-      {
-        name: PARENT_URL_ENV,
-        value: { serverPath: HUB_BASE_PATH },
-        reason: "Account Pooler hub for nested bb servers on this machine",
-      },
-      {
-        name: PARENT_TOKEN_ENV,
-        value: token,
-        reason: "Account Pooler hub token for this machine",
-      },
-    ];
-    const neutralized = (provider: PoolProvider): PoolEnvEntry[] =>
-      PROVIDER_ROUTING_ENV[provider].map((name) => ({
-        name,
-        value: "",
-        reason:
-          "Account Pooler is isolated from the parent bb server's pool on this instance",
-      }));
-    const contributeFor =
-      (provider: PoolProvider, serving: (token: string) => PoolEnvEntry[]) =>
-      async (context: { threadId: string; hostId: string }) => {
-        const bypassed = await routing.isBypassed(context.threadId);
-        if (!bypassed && (await canServe(provider))) {
-          const token = await hubTokens.forHost(context.hostId);
-          if (provider === "claude") {
-            await routing.recordRouted(context.threadId, context.hostId);
-          }
-          return [...serving(token), ...markerEntries(token)];
-        }
-        return parentPool === null ? [] : neutralized(provider);
-      };
     const proxiedHealth = async (provider: PoolProvider) =>
-      (await canServe(provider))
+      (await operations.isRoutingEnabled(provider)) &&
+      (await operations.hasUsableEnabledAccount(provider))
         ? {
             label: "Proxied",
             statusMessage:
-              proxyingParent() === null
-                ? "Credentials are provided by the Account Pooler hub."
-                : "Credentials are proxied to the parent bb server's Account Pooler.",
+              "Credentials are provided by the Account Pooler hub.",
           }
         : null;
-    bb.providers.experimental_contributeEnv(
-      "claude-code",
-      contributeFor("claude", (token) => [
+    bb.providers.experimental_contributeEnv("claude-code", async (context) => {
+      if (
+        !(await operations.isRoutingEnabled("claude")) ||
+        (await routing.isBypassed(context.threadId)) ||
+        !(await operations.hasUsableEnabledAccount("claude"))
+      ) {
+        return [];
+      }
+      const token = await hubTokens.forHost(context.hostId);
+      await routing.recordRouted(context.threadId, context.hostId);
+      return [
         {
           name: "ANTHROPIC_BASE_URL",
-          value: { serverPath: HUB_BASE_PATH },
+          value: { serverPath: hubBasePath(bb.pluginId) },
           reason: "Routed through the Account Pooler hub",
         },
         {
@@ -291,17 +227,24 @@ export function createAccountPoolPlugin(
           reason:
             "Claude Code turns tool search off behind a custom base URL; the hub forwards tool_reference blocks",
         },
-      ]),
-    );
+      ];
+    });
     bb.providers.experimental_contributeEnvHealth("claude-code", () =>
       proxiedHealth("claude"),
     );
-    bb.providers.experimental_contributeEnv(
-      "codex",
-      contributeFor("codex", (token) => [
+    bb.providers.experimental_contributeEnv("codex", async (context) => {
+      if (
+        !(await operations.isRoutingEnabled("codex")) ||
+        (await routing.isBypassed(context.threadId)) ||
+        !(await operations.hasUsableEnabledAccount("codex"))
+      ) {
+        return [];
+      }
+      const token = await hubTokens.forHost(context.hostId);
+      return [
         {
           name: "CODEX_OPENAI_BASE_URL",
-          value: { serverPath: `${HUB_BASE_PATH}/v1` },
+          value: { serverPath: `${hubBasePath(bb.pluginId)}/v1` },
           reason: "Routed through the Account Pooler hub",
         },
         {
@@ -309,11 +252,179 @@ export function createAccountPoolPlugin(
           value: token,
           reason: "Account Pooler hub token for this machine",
         },
-      ]),
-    );
+      ];
+    });
     bb.providers.experimental_contributeEnvHealth("codex", () =>
       proxiedHealth("codex"),
     );
+    const openAiCompatibleRoutes: ReadonlyArray<{
+      provider: PoolProvider;
+      mountPrefix: string;
+      providerId: string;
+      keyEnv: string;
+      baseUrlEnv: string;
+    }> = [
+      {
+        provider: "zai",
+        mountPrefix: ZAI_MOUNT_PREFIX,
+        providerId: "acp-opencode-zai",
+        keyEnv: "ZAI_API_KEY",
+        baseUrlEnv: "OXI_ZAI_BASE_URL",
+      },
+      {
+        provider: "opencode-go",
+        mountPrefix: OPENCODE_GO_MOUNT_PREFIX,
+        providerId: "acp-opencode-go",
+        keyEnv: "OPENCODE_API_KEY",
+        baseUrlEnv: "OXI_OPENCODE_GO_BASE_URL",
+      },
+    ];
+    // Cursor's CLI exchanges its configured key for tokens before anything else. The hub
+    // answers that itself instead of forwarding: it hands the machine back its own pool
+    // token, so the real subscription credential never leaves this host, and every later
+    // request arrives bearing a token the hub can recognise and swap for a minted one.
+    bb.http.route(
+      "POST",
+      `/${CURSOR_MOUNT_PREFIX}${CURSOR_EXCHANGE_PATH}`,
+      async (context) => {
+        const hostId = await hub.authenticate(context.req.raw);
+        if (hostId === null) {
+          return Response.json(
+            { error: { message: "Invalid Account Pooler bearer token.", code: 401 } },
+            { status: 401 },
+          );
+        }
+        const token = await hubTokens.forHost(hostId);
+        return Response.json({ accessToken: token, refreshToken: token });
+      },
+      { auth: "none" },
+    );
+    for (const path of CURSOR_PROXIED_PATHS) {
+      if (path === CURSOR_EXCHANGE_PATH) continue;
+      for (const method of ["POST", "GET"] as const) {
+        bb.http.route(
+          method,
+          `/${CURSOR_MOUNT_PREFIX}${path}`,
+          (context) => hub.handle(context.req.raw, "cursor"),
+          { auth: "none" },
+        );
+      }
+    }
+    // Both the built-in Cursor agent and our own wrapper entry: the wrapper exists only
+    // to pass --agent-endpoint, and it needs the same routed credentials.
+    for (const cursorProviderId of ["acp-cursor", "acp-oxi-cursor"]) {
+      bb.providers.experimental_contributeEnv(cursorProviderId, async (context) => {
+      if (
+        !(await operations.isRoutingEnabled("cursor")) ||
+        (await routing.isBypassed(context.threadId)) ||
+        !(await operations.hasUsableEnabledAccount("cursor"))
+      ) {
+        return [];
+      }
+      const token = await hubTokens.forHost(context.hostId);
+      return [
+        {
+          name: "CURSOR_API_ENDPOINT",
+          value: {
+            serverPath: `${hubBasePath(bb.pluginId)}/${CURSOR_MOUNT_PREFIX}`.replace(
+              /\/$/u,
+              "",
+            ),
+          },
+          reason: "Routed through the Account Pooler hub",
+        },
+        {
+          name: "CURSOR_API_KEY",
+          value: token,
+          reason: "Account Pooler hub token for this machine",
+        },
+        {
+          // Without this the CLI prefers a credential it already stored on the machine —
+          // on a developer's own Mac that is a real Cursor login, which the hub cannot
+          // authenticate, and the session dies at "Failed to initialize session services".
+          // A pooled session must neither read nor write the machine's credential store.
+          name: "AGENT_CLI_CREDENTIAL_STORE",
+          value: "memory",
+          reason: "Pooled session must ignore any credential stored on the machine",
+        },
+      ];
+    });
+      bb.providers.experimental_contributeEnvHealth(cursorProviderId, () =>
+        proxiedHealth("cursor"),
+      );
+    }
+    for (const entry of openAiCompatibleRoutes) {
+      for (const route of ["chat/completions", "responses", "models"]) {
+        bb.http.route(
+          "POST",
+          `/${entry.mountPrefix}v1/${route}`,
+          (context) => hub.handle(context.req.raw, entry.provider),
+          { auth: "none" },
+        );
+      }
+      bb.providers.experimental_contributeEnv(
+        entry.providerId,
+        async (context) => {
+          if (
+            !(await operations.isRoutingEnabled(entry.provider)) ||
+            (await routing.isBypassed(context.threadId)) ||
+            !(await operations.hasUsableEnabledAccount(entry.provider))
+          ) {
+            return [];
+          }
+          const token = await hubTokens.forHost(context.hostId);
+          return [
+            {
+              name: entry.baseUrlEnv,
+              value: {
+                serverPath: `${hubBasePath(bb.pluginId)}/${entry.mountPrefix}v1`,
+              },
+              reason: "Routed through the Account Pooler hub",
+            },
+            {
+              name: entry.keyEnv,
+              value: token,
+              reason: "Account Pooler hub token for this machine",
+            },
+          ];
+        },
+      );
+      bb.providers.experimental_contributeEnvHealth(entry.providerId, () =>
+        proxiedHealth(entry.provider),
+      );
+    }
+    for (const providerId of [
+      "acp-opencode-kimi",
+      "acp-opencode-kimi-highspeed",
+    ]) {
+      bb.providers.experimental_contributeEnv(providerId, async (context) => {
+        if (
+          !(await operations.isRoutingEnabled("kimi")) ||
+          (await routing.isBypassed(context.threadId)) ||
+          !(await operations.hasUsableEnabledAccount("kimi"))
+        ) {
+          return [];
+        }
+        const token = await hubTokens.forHost(context.hostId);
+        return [
+          {
+            name: "OXI_KIMI_BASE_URL",
+            value: {
+              serverPath: `${hubBasePath(bb.pluginId)}/${KIMI_MOUNT_PREFIX}v1`,
+            },
+            reason: "Routed through the Account Pooler hub",
+          },
+          {
+            name: "KIMI_API_KEY",
+            value: token,
+            reason: "Account Pooler hub token for this machine",
+          },
+        ];
+      });
+      bb.providers.experimental_contributeEnvHealth(providerId, () =>
+        proxiedHealth("kimi"),
+      );
+    }
     bb.onDispose(async () => {
       codexLogin.dispose();
       let timer: ReturnType<typeof setTimeout> | null = null;
@@ -342,14 +453,18 @@ export function createAccountPoolPlugin(
         if (timer !== null) clearTimeout(timer);
       }
     });
-    for (const route of ["/v1/messages", "/v1/messages/count_tokens"]) {
-      bb.http.route(
-        "POST",
-        route,
-        (context) => hub.handle(context.req.raw, "claude", route),
-        { auth: "none" },
-      );
-    }
+    bb.http.route(
+      "POST",
+      "/v1/messages",
+      (context) => hub.handle(context.req.raw, "claude"),
+      { auth: "none" },
+    );
+    bb.http.route(
+      "POST",
+      "/v1/messages/count_tokens",
+      (context) => hub.handle(context.req.raw, "claude"),
+      { auth: "none" },
+    );
     for (const route of [
       "/v1/responses",
       "/v1/images/generations",
@@ -359,32 +474,27 @@ export function createAccountPoolPlugin(
       bb.http.route(
         "POST",
         route,
-        (context) => hub.handle(context.req.raw, "codex", route),
+        (context) => hub.handle(context.req.raw, "codex"),
         { auth: "none" },
       );
     }
     bb.http.route(
       "GET",
       "/v1/models",
-      (context) => hub.handle(context.req.raw, "codex", "/v1/models"),
+      (context) => hub.handle(context.req.raw, "codex"),
       { auth: "none" },
     );
-    bb.http.route(
-      "GET",
-      AVAILABILITY_PATH,
-      async (context) => {
-        if ((await hub.authenticate(context.req.raw)) === null) {
-          return new Response(null, { status: 401 });
-        }
-        return Response.json(
-          poolAvailabilitySchema.parse({
-            claude: await canServe("claude"),
-            codex: await canServe("codex"),
-          }),
-        );
-      },
-      { auth: "none" },
-    );
+    for (const route of [
+      `/${KIMI_MOUNT_PREFIX}v1/messages`,
+      `/${KIMI_MOUNT_PREFIX}v1/messages/count_tokens`,
+    ]) {
+      bb.http.route(
+        "POST",
+        route,
+        (context) => hub.handle(context.req.raw, "kimi"),
+        { auth: "none" },
+      );
+    }
     bb.http.route("HEAD", "/api/hello", () => helloResponse(), {
       auth: "none",
     });

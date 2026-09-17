@@ -41,11 +41,14 @@ bb pool account enable <id>
 bb pool account disable <id>
 bb pool account priority <id> <n>
 bb pool account reorder <claude|codex> <id>...
+bb pool account role <id> <primary|reserve>
+bb pool account cap <id> <early> <late>
+bb pool account cap <id> off
 bb pool account refresh <id>
 bb pool status [--json]
 bb pool routing <claude|codex> [--off]
 bb pool config
-bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold> <value>
+bb pool config set <anthropicUpstreamBaseUrl|codexUpstreamBaseUrl|switchThreshold|parentMode|routingStrategy|reserveDrainHours|restDays> <value>
 bb pool token rotate --machine <id-or-name>
 bb pool bypass <thread-id> [--off]
 ```

@@ -73,6 +73,8 @@ function summary(account: CodexDeviceAccount): AccountSummary {
     createdAt: 1,
     lastUsedAt: null,
     lastUsedHostId: null,
+    role: "primary",
+    cap: null,
     lastUsedHostName: null,
     fiveHourUtilization: null,
     fiveHourResetAt: null,
@@ -93,6 +95,10 @@ function summary(account: CodexDeviceAccount): AccountSummary {
     heldUntil: null,
     error: null,
     inFlight: 0,
+    capLimit: null,
+    eligible: true,
+    capReached: false,
+    drainOpensAt: null,
     status: "ready",
   };
 }

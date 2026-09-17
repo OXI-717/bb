@@ -61,6 +61,8 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     createdAt: 1,
     lastUsedAt: 2,
     lastUsedHostId: "host-one",
+    role: "primary",
+    cap: null,
     lastUsedHostName: "bee",
     fiveHourUtilization: 0.21,
     fiveHourResetAt: null,
@@ -81,12 +83,26 @@ function account(overrides: Partial<AccountSummary> = {}): AccountSummary {
     heldUntil: null,
     error: null,
     inFlight: 0,
+    capLimit: null,
+    eligible: true,
+    capReached: false,
+    drainOpensAt: null,
     status: "ready",
     ...overrides,
   };
 }
 
-function status(accounts: AccountSummary[] = [account()]): PoolStatus {
+function status(
+  accounts: AccountSummary[] = [account()],
+  activeAccounts: PoolStatus["activeAccounts"] = {
+    claude: null,
+    codex: null,
+    kimi: null,
+    zai: null,
+    "opencode-go": null,
+    cursor: null,
+  },
+): PoolStatus {
   return {
     route: "/api/v1/plugins/account-pool/http",
     enabledAccountCount: accounts.filter((item) => item.enabled).length,
@@ -96,8 +112,15 @@ function status(accounts: AccountSummary[] = [account()]): PoolStatus {
       { hostId: "host-one", hostName: "bee", mintedAt: 1, lastUsedAt: 2 },
     ],
     accounts,
-    routing: { claude: true, codex: true },
-    parent: null,
+    activeAccounts,
+    routing: {
+      claude: true,
+      codex: true,
+      kimi: true,
+      zai: true,
+      "opencode-go": true,
+      cursor: true,
+    },
   };
 }
 
@@ -105,8 +128,14 @@ function config(overrides: Partial<AccountPoolConfig> = {}): AccountPoolConfig {
   return {
     anthropicUpstreamBaseUrl: "https://api.anthropic.com",
     codexUpstreamBaseUrl: "https://chatgpt.com/backend-api/codex",
+    kimiUpstreamBaseUrl: "https://api.kimi.com/coding/v1",
+    zaiUpstreamBaseUrl: "https://api.z.ai/api/coding/paas/v4",
+    opencodeGoUpstreamBaseUrl: "https://opencode.ai/zen/go/v1",
+    cursorUpstreamBaseUrl: "https://api2.cursor.sh",
     switchThreshold: 0.98,
-    parentMode: "proxy",
+    routingStrategy: "sequential",
+    reserveDrainHours: 24,
+    restDays: [0, 6],
     ...overrides,
   };
 }
@@ -129,85 +158,6 @@ function render(
   );
 }
 
-describe("Account Pool parent banner", () => {
-  const PARENT_URL = "http://127.0.0.1:25231/api/v1/plugins/account-pool/http";
-
-  function renderWithParent(parent: PoolStatus["parent"]) {
-    return renderSlot(
-      app.settingsSections[0]!,
-      {},
-      {
-        rpc: {
-          "status.get": () => ({ ...status(), parent }),
-          "config.get": () => config(),
-        },
-        openUrl: () => true,
-      },
-    );
-  }
-
-  it("says nothing about a parent when this server has none", async () => {
-    const slot = renderWithParent(null);
-    expect(await slot.findByText("person@example.com")).toBeTruthy();
-    expect(slot.queryByText(/Account Pooler available/i)).toBeNull();
-  });
-
-  it("invites pooling through the parent while isolated, without leaking the api path", async () => {
-    const slot = renderWithParent({
-      baseUrl: PARENT_URL,
-      mode: "isolate",
-      availability: { claude: true, codex: true },
-    });
-    expect(
-      await slot.findByText("Parent Account Pooler available"),
-    ).toBeTruthy();
-    expect(
-      slot.getByText(/started from a thread on 127\.0\.0\.1:25231/),
-    ).toBeTruthy();
-    expect(slot.queryByText(/api\/v1\/plugins/)).toBeNull();
-  });
-
-  it("names both providers and says local accounts go unused while proxying", async () => {
-    const slot = renderWithParent({
-      baseUrl: PARENT_URL,
-      mode: "proxy",
-      availability: { claude: true, codex: true },
-    });
-    expect(
-      await slot.findByText("Using the parent Account Pooler"),
-    ).toBeTruthy();
-    expect(
-      slot.getByText(
-        /Claude and Codex requests are sent to the pool on 127\.0\.0\.1:25231\. Accounts on this server are not used/,
-      ),
-    ).toBeTruthy();
-  });
-
-  it("calls out a provider the parent cannot serve", async () => {
-    const slot = renderWithParent({
-      baseUrl: PARENT_URL,
-      mode: "proxy",
-      availability: { claude: true, codex: false },
-    });
-    expect(
-      await slot.findByText(
-        /Claude requests are sent to the pool on .*Codex has no accounts there, so those requests fall back/,
-      ),
-    ).toBeTruthy();
-  });
-
-  it("says nothing is routed when the parent has no accounts at all", async () => {
-    const slot = renderWithParent({
-      baseUrl: PARENT_URL,
-      mode: "proxy",
-      availability: { claude: false, codex: false },
-    });
-    expect(
-      await slot.findByText(/has no accounts available right now/),
-    ).toBeTruthy();
-  });
-});
-
 describe("Account Pool settings", () => {
   it("renders cached accounts as refreshing until live status arrives, then caches it", async () => {
     window.localStorage.setItem(
@@ -218,14 +168,14 @@ describe("Account Pool settings", () => {
     const slot = render([], { "status.get": () => live.promise });
     expect(slot.getByText("person@example.com")).toBeTruthy();
     expect(slot.getByText("21%")).toBeTruthy();
-    expect(slot.getByText("refreshing usage…")).toBeTruthy();
-    expect(slot.getByText(/· refreshing…$/)).toBeTruthy();
-    expect(slot.queryByText("Loading…")).toBeNull();
-    expect(slot.queryByText("No accounts in the pool")).toBeNull();
+    expect(slot.getByText("обновляю квоты…")).toBeTruthy();
+    expect(slot.getByText(/· обновляю…$/)).toBeTruthy();
+    expect(slot.queryByText("Загрузка…")).toBeNull();
+    expect(slot.queryByText("В пуле нет аккаунтов")).toBeNull();
     live.resolve(status([account({ fiveHourUtilization: 0.6 })]));
     expect(await slot.findByText("60%")).toBeTruthy();
-    expect(slot.queryByText("refreshing usage…")).toBeNull();
-    expect(slot.queryByText(/· refreshing…$/)).toBeNull();
+    expect(slot.queryByText("обновляю квоты…")).toBeNull();
+    expect(slot.queryByText(/· обновляю…$/)).toBeNull();
     const cached = JSON.parse(
       window.localStorage.getItem(STATUS_CACHE_KEY) ?? "null",
     ) as PoolStatus;
@@ -236,7 +186,7 @@ describe("Account Pool settings", () => {
     window.localStorage.setItem(STATUS_CACHE_KEY, '{"accounts":"nope"}');
     const live = deferred<PoolStatus>();
     const slot = render([], { "status.get": () => live.promise });
-    expect(slot.getAllByText("Loading…")).toHaveLength(2);
+    expect(slot.getAllByText("Загрузка…")).toHaveLength(6);
     live.resolve(status());
     expect(await slot.findByText("person@example.com")).toBeTruthy();
   });
@@ -247,31 +197,29 @@ describe("Account Pool settings", () => {
       "account.refreshUsage": () => refresh.promise,
     });
     fireEvent.pointerDown(
-      await slot.findByRole("button", { name: "person@example.com actions" }),
+      await slot.findByRole("button", { name: "Действия: person@example.com" }),
     );
-    fireEvent.click(await slot.findByText("Refresh usage"));
-    expect(await slot.findByText("refreshing usage…")).toBeTruthy();
+    fireEvent.click(await slot.findByText("Обновить квоты"));
+    expect(await slot.findByText("обновляю квоты…")).toBeTruthy();
     refresh.resolve({ account: null });
-    await waitFor(() =>
-      expect(slot.queryByText("refreshing usage…")).toBeNull(),
-    );
+    await waitFor(() => expect(slot.queryByText("обновляю квоты…")).toBeNull());
   });
 
   it("renders fixed quota slots with missing buckets as em dashes", async () => {
     const slot = render();
     expect(await slot.findByText("person@example.com")).toBeTruthy();
-    expect(slot.getByText("5H")).toBeTruthy();
-    expect(slot.getByText("7D")).toBeTruthy();
+    expect(slot.getByText("5Ч")).toBeTruthy();
+    expect(slot.getByText("7Д")).toBeTruthy();
     expect(slot.getByText("FABLE")).toBeTruthy();
     expect(slot.getAllByText("—")).toHaveLength(2);
     expect(
-      slot.getByText("Hub accepting · 2 in flight · used by bee"),
+      slot.getByText("Хаб принимает · 2 в работе · используют bee"),
     ).toBeTruthy();
   });
 
   it("keeps the quota slots visible at mobile widths", async () => {
     const slot = render();
-    const group = (await slot.findByText("5H")).parentElement?.parentElement;
+    const group = (await slot.findByText("5Ч")).parentElement?.parentElement;
     expect(group).toBeTruthy();
     expect(group?.className).not.toMatch(/(^|\s)hidden(\s|$)/u);
   });
@@ -301,31 +249,33 @@ describe("Account Pool settings", () => {
       }),
     ]);
     expect(await slot.findByText("pro@example.com")).toBeTruthy();
-    expect(slot.getByText("7D")).toBeTruthy();
+    expect(slot.getByText("7Д")).toBeTruthy();
     expect(slot.getByText("100%")).toBeTruthy();
-    expect(slot.queryByText("5H")).toBeNull();
+    expect(slot.queryByText("5Ч")).toBeNull();
     expect(slot.queryByText("FABLE")).toBeNull();
     expect(
       slot.getByText(
-        `Exhausted · resets ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(blockingResetAt)}`,
+        `Исчерпан · сброс ${new Intl.DateTimeFormat("ru-RU", { month: "short", day: "numeric", timeZone: "Europe/Moscow" }).format(blockingResetAt)}`,
       ),
     ).toBeTruthy();
     fireEvent.click(
-      await slot.findByRole("button", { name: "Open pro@example.com details" }),
+      await slot.findByRole("button", {
+        name: "Открыть карточку: pro@example.com",
+      }),
     );
-    expect(await slot.findByText("Weekly")).toBeTruthy();
-    expect(slot.queryByText("5 hour")).toBeNull();
-    expect(slot.queryByText("7 day")).toBeNull();
+    expect(await slot.findByText("Неделя")).toBeTruthy();
+    expect(slot.queryByText("5 часов")).toBeNull();
+    expect(slot.queryByText("7 дней")).toBeNull();
   });
 
   it.each([
     {
-      action: "Disable",
+      action: "Выключить",
       method: "account.disable",
       input: { id: account().id },
     },
     {
-      action: "Refresh usage",
+      action: "Обновить квоты",
       method: "account.refreshUsage",
       input: { accountId: account().id },
     },
@@ -336,7 +286,9 @@ describe("Account Pool settings", () => {
         [method]: () => ({ account: null }),
       });
       fireEvent.pointerDown(
-        await slot.findByRole("button", { name: "person@example.com actions" }),
+        await slot.findByRole("button", {
+          name: "Действия: person@example.com",
+        }),
       );
       fireEvent.click(await slot.findByText(action));
       expect(slot.rpcCalls).toContainEqual({ method, input });
@@ -348,14 +300,14 @@ describe("Account Pool settings", () => {
       "account.remove": () => ({ removed: true }),
     });
     fireEvent.pointerDown(
-      await slot.findByRole("button", { name: "person@example.com actions" }),
+      await slot.findByRole("button", { name: "Действия: person@example.com" }),
     );
-    fireEvent.click(await slot.findByText("Remove"));
-    expect(await slot.findByText("Remove person@example.com?")).toBeTruthy();
+    fireEvent.click(await slot.findByText("Удалить"));
+    expect(await slot.findByText("Удалить person@example.com?")).toBeTruthy();
     expect(slot.rpcCalls.some((call) => call.method === "account.remove")).toBe(
       false,
     );
-    fireEvent.click(slot.getByRole("button", { name: "Remove" }));
+    fireEvent.click(slot.getByRole("button", { name: "Удалить" }));
     expect(slot.rpcCalls).toContainEqual({
       method: "account.remove",
       input: { id: account().id },
@@ -377,22 +329,20 @@ describe("Account Pool settings", () => {
       }),
     });
     const addButtons = await slot.findAllByRole("button", {
-      name: "Add account",
+      name: "Добавить аккаунт",
     });
     fireEvent.pointerDown(addButtons[0]!);
     fireEvent.click(
-      await slot.findByText("Sign in to Claude", { selector: "span.block" }),
+      await slot.findByText("Вход в Claude", { selector: "span.block" }),
     );
-    expect(
-      await slot.findByLabelText("Claude authorization code"),
-    ).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Close" }));
+    expect(await slot.findByLabelText("Код авторизации Claude")).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Закрыть" }));
     fireEvent.pointerDown(addButtons[1]!);
     fireEvent.click(
-      await slot.findByText("Sign in to Codex", { selector: "span.block" }),
+      await slot.findByText("Вход в Codex", { selector: "span.block" }),
     );
     expect(
-      (await slot.findByLabelText("Codex user code")).textContent,
+      (await slot.findByLabelText("Код устройства Codex")).textContent,
     ).toContain("ABCD-1234");
   });
 
@@ -401,7 +351,7 @@ describe("Account Pool settings", () => {
       "routing.set": () => ({ provider: "claude", enabled: false }),
     });
     fireEvent.click(
-      await slot.findByRole("switch", { name: "Route Claude threads" }),
+      await slot.findByRole("switch", { name: "Направлять треды Claude" }),
     );
     await waitFor(() =>
       expect(slot.rpcCalls).toContainEqual({
@@ -418,20 +368,22 @@ describe("Account Pool settings", () => {
     const slot = render([account()], {
       "config.set": () => nextConfig,
     });
-    fireEvent.click(await slot.findByRole("button", { name: "Advanced" }));
-    const anthropic = await slot.findByLabelText("Anthropic upstream base URL");
+    fireEvent.click(await slot.findByRole("button", { name: "Дополнительно" }));
+    const anthropic = await slot.findByLabelText(
+      "Базовый URL upstream Anthropic",
+    );
     if (!(anthropic instanceof HTMLInputElement)) {
       throw new Error("Expected the Anthropic config field to be an input.");
     }
     await waitFor(() =>
       expect(anthropic.value).toBe("https://api.anthropic.com"),
     );
-    expect(slot.getByLabelText("Codex upstream base URL")).toBeTruthy();
-    expect(slot.getByLabelText("Quota switch threshold")).toBeTruthy();
+    expect(slot.getByLabelText("Базовый URL upstream Codex")).toBeTruthy();
+    expect(slot.getByLabelText("Порог переключения по квоте")).toBeTruthy();
 
     fireEvent.change(anthropic, { target: { value: "ftp://invalid.example" } });
     fireEvent.blur(anthropic);
-    expect(await slot.findByText("Must be an HTTP or HTTPS URL.")).toBeTruthy();
+    expect(await slot.findByText("Нужен адрес http или https.")).toBeTruthy();
     expect(slot.rpcCalls.some((call) => call.method === "config.set")).toBe(
       false,
     );
@@ -446,6 +398,235 @@ describe("Account Pool settings", () => {
         input: { anthropicUpstreamBaseUrl: "https://proxy.example.com" },
       }),
     );
+  });
+
+  it("marks the current account, reserve role, and live cap in each row", async () => {
+    const work = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "work@example.com",
+      email: "work@example.com",
+      role: "reserve",
+      capLimit: 0.39,
+    });
+    const slot = render([account(), work], {
+      "status.get": () =>
+        status([account(), work], {
+          claude: account().id,
+          codex: null,
+          kimi: null,
+          zai: null,
+          "opencode-go": null,
+          cursor: null,
+        }),
+    });
+    expect(
+      await slot.findByText("Сейчас Claude: person@example.com"),
+    ).toBeTruthy();
+    expect(slot.getByText("Сейчас Codex: нет")).toBeTruthy();
+    expect(slot.getAllByText("Текущий")).toHaveLength(1);
+    expect(slot.getAllByText("Резерв")).toHaveLength(1);
+    expect(slot.getByText("потолок сейчас 39% (15%→98%)")).toBeTruthy();
+  });
+
+  it("saves a role and a weekly cap from the row actions", async () => {
+    const slot = render([account()], {
+      "account.setRole": () => ({ account: null }),
+      "account.setCap": () => ({ account: null }),
+    });
+    fireEvent.pointerDown(
+      await slot.findByRole("button", { name: "Действия: person@example.com" }),
+    );
+    fireEvent.click(await slot.findByText("Задать роль…"));
+    fireEvent.click(await slot.findByRole("button", { name: "Резерв" }));
+    fireEvent.click(slot.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "account.setRole",
+        input: { accountId: account().id, role: "reserve" },
+      }),
+    );
+    await waitFor(() => expect(slot.queryByText("Роль")).toBeNull());
+    fireEvent.pointerDown(
+      await slot.findByRole("button", { name: "Действия: person@example.com" }),
+    );
+    fireEvent.click(await slot.findByText("Задать недельный потолок…"));
+    fireEvent.change(await slot.findByLabelText("Потолок в начале недели"), {
+      target: { value: "0.2" },
+    });
+    fireEvent.change(slot.getByLabelText("Потолок к сбросу"), {
+      target: { value: "0.9" },
+    });
+    fireEvent.click(slot.getByRole("button", { name: "Сохранить" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "account.setCap",
+        input: { accountId: account().id, cap: { early: 0.2, late: 0.9 } },
+      }),
+    );
+  });
+
+  it("switches balanced routing and saves drain hours and rest days", async () => {
+    const slot = render([account()], {
+      "config.set": () => config({ routingStrategy: "balanced" }),
+    });
+    const balanced = await slot.findByRole("switch", {
+      name: "Балансировка",
+    });
+    await waitFor(() =>
+      expect((balanced as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(balanced);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { routingStrategy: "balanced" },
+      }),
+    );
+    const drain = await slot.findByLabelText("Часы расхода резерва");
+    await waitFor(() =>
+      expect((drain as HTMLInputElement).disabled).toBe(false),
+    );
+    fireEvent.change(drain, { target: { value: "12" } });
+    fireEvent.blur(drain);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { reserveDrainHours: 12 },
+      }),
+    );
+    expect(slot.getByText("вс, сб не идут в счёт до сброса.")).toBeTruthy();
+    const friday = slot.getByRole("button", { name: "пт" });
+    await waitFor(() =>
+      expect((friday as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(friday);
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { restDays: [0, 5, 6] },
+      }),
+    );
+    fireEvent.click(slot.getByRole("button", { name: "вс" }));
+    await waitFor(() =>
+      expect(slot.rpcCalls).toContainEqual({
+        method: "config.set",
+        input: { restDays: [6] },
+      }),
+    );
+  });
+
+  it("lists when each reserve account joins the primary ones", async () => {
+    const soon = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "work-soon@example.com",
+      email: "work-soon@example.com",
+      role: "reserve",
+      capLimit: 0.8,
+      drainOpensAt: Date.now() - 60_000,
+      sevenDayResetAt: Date.now() + 60 * 60 * 1_000,
+    });
+    const later = account({
+      id: "33333333-3333-4333-8333-333333333333",
+      label: "work-later@example.com",
+      email: "work-later@example.com",
+      role: "reserve",
+      capLimit: 0.3,
+      drainOpensAt: Date.now() + 2 * 24 * 60 * 60 * 1_000,
+      sevenDayResetAt: Date.now() + 3 * 24 * 60 * 60 * 1_000,
+    });
+    const slot = render([account(), later, soon]);
+    expect(await slot.findByText("Окна расхода")).toBeTruthy();
+    expect(slot.getByText("уже открыто")).toBeTruthy();
+    const table = slot.getByLabelText("Окна расхода Claude");
+    expect(slot.queryByLabelText("Окна расхода Codex")).toBeNull();
+    const rows = Array.from(table.querySelectorAll("tbody tr")).map(
+      (row) => row.textContent ?? "",
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("work-soon@example.com");
+    expect(rows[1]).toContain("work-later@example.com");
+    expect(rows[1]).toContain("30%");
+    expect(rows[1]).toMatch(/\d{2}\.\d{2} \d{2}:\d{2} \(/);
+  });
+
+  it("separates a capped account from a reserve account on standby", async () => {
+    const capped = account({
+      role: "reserve",
+      cap: { early: 0.15, late: 0.98 },
+      capLimit: 0.2,
+      capReached: true,
+      eligible: false,
+      sevenDayUtilization: 0.5,
+      sevenDayResetAt: Date.now() + 2 * 24 * 60 * 60 * 1_000,
+    });
+    const standby = account({
+      id: "22222222-2222-4222-8222-222222222222",
+      label: "standby@example.com",
+      email: "standby@example.com",
+      role: "reserve",
+      capLimit: 0.6,
+      eligible: false,
+    });
+    const slot = render([capped, standby]);
+    expect(
+      await slot.findByText((text) => text.startsWith("Потолок · ")),
+    ).toBeTruthy();
+    expect(slot.getByText("Резерв · в запасе")).toBeTruthy();
+    expect(slot.getByText("50%").className).toContain("text-destructive-text");
+  });
+
+  it("names a Codex window without a reported length by its slot", async () => {
+    const codex = account({
+      provider: "codex",
+      kind: "oauth",
+      label: "codex@example.com",
+      email: "codex@example.com",
+      subscriptionType: "pro",
+      fiveHourUtilization: null,
+      limitWindows: [
+        {
+          slot: "secondary",
+          windowMinutes: null,
+          utilization: 0.12,
+          resetAt: null,
+          status: null,
+          observedAt: 1,
+          source: "header",
+        },
+      ],
+    });
+    const slot = render([codex]);
+    expect(await slot.findByText("7Д")).toBeTruthy();
+    expect(slot.queryByText("ЛИМИТ 2")).toBeNull();
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Открыть codex@example.com" }),
+    );
+    expect(await slot.findByText("Неделя")).toBeTruthy();
+    expect(slot.queryByText("Второй лимит")).toBeNull();
+  });
+
+  it("explains the role, the weekly cap, and the effective skip limit in the detail dialog", async () => {
+    const work = account({
+      role: "reserve",
+      cap: { early: 0.15, late: 0.98 },
+      capLimit: 0.45,
+      sevenDayUtilization: 0.5,
+      sevenDayResetAt: Date.now() + 3 * 24 * 60 * 60 * 1_000,
+    });
+    const slot = render([work]);
+    fireEvent.click(
+      await slot.findByRole("button", { name: "Открыть person@example.com" }),
+    );
+    expect(await slot.findAllByText("Резерв")).toHaveLength(2);
+    expect(slot.getByText("15% → 98% · сейчас 45%")).toBeTruthy();
+    expect(
+      slot.getByText(
+        "Используется, только когда ни один основной аккаунт не подходит, или за 24 рабочих часов до его недельного сброса.",
+      ),
+    ).toBeTruthy();
+    expect(
+      slot.getByText((text) => text.includes("пропуск при 45%")),
+    ).toBeTruthy();
   });
 
   it("shows every observed family bucket in the detail dialog", async () => {
@@ -469,11 +650,11 @@ describe("Account Pool settings", () => {
     ]);
     fireEvent.click(
       await slot.findByRole("button", {
-        name: "Open person@example.com details",
+        name: "Открыть карточку: person@example.com",
       }),
     );
-    expect(await slot.findByText("Fable 7 day")).toBeTruthy();
-    expect(slot.getByText("Opus 7 day")).toBeTruthy();
+    expect(await slot.findByText("Fable, неделя")).toBeTruthy();
+    expect(slot.getByText("Opus, неделя")).toBeTruthy();
   });
 
   it("shows the email beside a display-name label in the row and detail dialog", async () => {
@@ -488,9 +669,9 @@ describe("Account Pool settings", () => {
     expect(await slot.findByText("Person Example")).toBeTruthy();
     expect(slot.getAllByText("person@example.com")).toHaveLength(1);
     fireEvent.click(
-      slot.getByRole("button", { name: "Open Person Example details" }),
+      slot.getByRole("button", { name: "Открыть карточку: Person Example" }),
     );
-    expect(await slot.findByText("Email")).toBeTruthy();
+    expect(await slot.findByText("Почта")).toBeTruthy();
     expect(slot.getAllByText("person@example.com")).toHaveLength(2);
   });
 
@@ -519,22 +700,20 @@ describe("Account Pool settings", () => {
 
   it("names the sign-in dialog once and keeps the step instructions", async () => {
     const slot = render([], { "codexLogin.start": codexLoginStart });
-    fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
-    );
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     const dialog = await slot.findByRole("dialog", {
-      name: "Sign in to Codex",
+      name: "Вход в Codex",
     });
-    expect(
-      slot.getAllByRole("heading", { name: "Sign in to Codex" }),
-    ).toHaveLength(1);
+    expect(slot.getAllByRole("heading", { name: "Вход в Codex" })).toHaveLength(
+      1,
+    );
     expect(dialog.textContent).toContain(
-      "Open the verification page, sign in to ChatGPT, and enter this code.",
+      "Откройте страницу проверки, войдите в ChatGPT и введите этот код.",
     );
     expect(
-      (await slot.findByLabelText("Codex user code")).textContent,
+      (await slot.findByLabelText("Код устройства Codex")).textContent,
     ).toContain("ABCD-1234");
-    expect(slot.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Отмена" })).toBeNull();
   });
 
   it.each([false, true])(
@@ -547,10 +726,10 @@ describe("Account Pool settings", () => {
         "codexLogin.cancel": () => ({ cancelled: true }),
       });
       fireEvent.click(
-        await slot.findByRole("button", { name: "Sign in to Codex" }),
+        await slot.findByRole("button", { name: "Войти в Codex" }),
       );
-      await slot.findByRole("dialog", { name: "Sign in to Codex" });
-      fireEvent.click(slot.getByRole("button", { name: "Close" }));
+      await slot.findByRole("dialog", { name: "Вход в Codex" });
+      fireEvent.click(slot.getByRole("button", { name: "Закрыть" }));
       await waitFor(() =>
         expect(slot.rpcCalls).toContainEqual({
           method: "codexLogin.cancel",
@@ -558,9 +737,7 @@ describe("Account Pool settings", () => {
         }),
       );
       await waitFor(() =>
-        expect(slot.queryByRole("dialog", { name: "Sign in to Codex" })).toBe(
-          null,
-        ),
+        expect(slot.queryByRole("dialog", { name: "Вход в Codex" })).toBe(null),
       );
       const polls = () =>
         slot.rpcCalls.filter((call) => call.method === "codexLogin.poll")
@@ -578,24 +755,24 @@ describe("Account Pool settings", () => {
       clipboard: { writeText },
     });
     const slot = render([], { "codexLogin.start": codexLoginStart });
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
-    );
-    fireEvent.click(
-      await slot.findByRole("button", { name: "Copy Codex sign-in code" }),
+      await slot.findByRole("button", { name: "Скопировать код входа Codex" }),
     );
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("ABCD-1234"));
     await waitFor(() =>
-      expect(slot.getByText("Sign-in code copied")).toBeTruthy(),
+      expect(slot.getByText("Код входа скопирован")).toBeTruthy(),
     );
     expect(
       slot
-        .getByRole("button", { name: "Copy Codex sign-in code" })
+        .getByRole("button", { name: "Скопировать код входа Codex" })
         .querySelector('[data-icon="Check"]'),
     ).not.toBeNull();
 
     fireEvent.click(
-      slot.getByRole("button", { name: "Copy Codex authorization URL" }),
+      slot.getByRole("button", {
+        name: "Скопировать ссылку авторизации Codex",
+      }),
     );
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
@@ -611,17 +788,15 @@ describe("Account Pool settings", () => {
       clipboard: { writeText },
     });
     const slot = render([], { "codexLogin.start": codexLoginStart });
-    fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
-    );
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     const button = await slot.findByRole("button", {
-      name: "Copy Codex sign-in code",
+      name: "Скопировать код входа Codex",
     });
     fireEvent.click(button);
     await waitFor(() =>
       expect(window.getSelection()?.toString()).toBe("ABCD-1234"),
     );
-    expect(slot.queryByText("Sign-in code copied")).toBeNull();
+    expect(slot.queryByText("Код входа скопирован")).toBeNull();
     expect(button.querySelector('[data-icon="Check"]')).toBeNull();
   });
 
@@ -632,16 +807,14 @@ describe("Account Pool settings", () => {
       clipboard: { writeText },
     });
     const slot = render([], { "codexLogin.start": codexLoginStart });
-    fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
-    );
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     const button = await slot.findByRole("button", {
-      name: "Copy Codex authorization URL",
+      name: "Скопировать ссылку авторизации Codex",
     });
     fireEvent.click(button);
     await waitFor(() => expect(writeText).toHaveBeenCalled());
-    expect(button.textContent).not.toContain("Copied");
-    expect(slot.queryByText("Authorization URL copied")).toBeNull();
+    expect(button.textContent).not.toContain("Скопировано");
+    expect(slot.queryByText("Ссылка авторизации скопирована")).toBeNull();
   });
 
   it("keeps polling and the close action working after copying the code", async () => {
@@ -655,18 +828,15 @@ describe("Account Pool settings", () => {
       "codexLogin.poll": () => ({ status: "pending" }),
       "codexLogin.cancel": () => ({ cancelled: true }),
     });
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
-    );
-    fireEvent.click(
-      await slot.findByRole("button", { name: "Copy Codex sign-in code" }),
+      await slot.findByRole("button", { name: "Скопировать код входа Codex" }),
     );
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("ABCD-1234"));
     expect(
-      (await slot.findByRole("dialog", { name: "Sign in to Codex" }))
-        .textContent,
-    ).toContain("Waiting for you to authorize");
-    fireEvent.click(slot.getByRole("button", { name: "Close" }));
+      (await slot.findByRole("dialog", { name: "Вход в Codex" })).textContent,
+    ).toContain("Жду авторизацию");
+    fireEvent.click(slot.getByRole("button", { name: "Закрыть" }));
     await waitFor(() =>
       expect(slot.rpcCalls).toContainEqual({
         method: "codexLogin.cancel",
@@ -690,10 +860,10 @@ describe("Account Pool settings", () => {
       },
       "codexLogin.poll": () => ({ status: "error", message: "Code expired." }),
     });
+    fireEvent.click(await slot.findByRole("button", { name: "Войти в Codex" }));
     fireEvent.click(
-      await slot.findByRole("button", { name: "Sign in to Codex" }),
+      await slot.findByRole("button", { name: "Попробовать снова" }),
     );
-    fireEvent.click(await slot.findByRole("button", { name: "Try again" }));
     await waitFor(() => expect(starts).toBe(2));
   });
   it.each(["claude", "codex"] as const)(
@@ -722,7 +892,9 @@ describe("Account Pool settings", () => {
             };
           }),
       });
-      const handle = await slot.findByRole("button", { name: "Reorder First" });
+      const handle = await slot.findByRole("button", {
+        name: "Переместить First",
+      });
       await keyboardMove(handle);
       fireEvent.keyDown(document, { code: "Space" });
       await waitFor(() =>
@@ -733,16 +905,22 @@ describe("Account Pool settings", () => {
       );
       const providerOrder = () =>
         slot
-          .getAllByRole("button", { name: /Reorder (First|Second)/ })
+          .getAllByRole("button", { name: /Переместить (First|Second)/ })
           .map((button) => button.getAttribute("aria-label"));
-      expect(providerOrder()).toEqual(["Reorder Second", "Reorder First"]);
+      expect(providerOrder()).toEqual([
+        "Переместить Second",
+        "Переместить First",
+      ]);
       expect(handle.hasAttribute("disabled")).toBe(true);
       finishSave();
       await waitFor(() => expect(handle.hasAttribute("disabled")).toBe(false));
-      expect(providerOrder()).toEqual(["Reorder Second", "Reorder First"]);
+      expect(providerOrder()).toEqual([
+        "Переместить Second",
+        "Переместить First",
+      ]);
       expect(
         slot
-          .getByRole("button", { name: "Reorder Other" })
+          .getByRole("button", { name: "Переместить Other" })
           .hasAttribute("disabled"),
       ).toBe(true);
     },
@@ -764,7 +942,9 @@ describe("Account Pool settings", () => {
         },
       },
     );
-    const handle = await slot.findByRole("button", { name: "Reorder First" });
+    const handle = await slot.findByRole("button", {
+      name: "Переместить First",
+    });
     await keyboardMove(handle);
     fireEvent.keyDown(document, { code: "Space" });
     expect(
@@ -772,9 +952,9 @@ describe("Account Pool settings", () => {
     ).toBeTruthy();
     expect(
       slot
-        .getAllByRole("button", { name: /Reorder/ })
+        .getAllByRole("button", { name: /Переместить/ })
         .map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Reorder First", "Reorder Second"]);
+    ).toEqual(["Переместить First", "Переместить Second"]);
     expect(handle.hasAttribute("disabled")).toBe(false);
   });
 
@@ -789,7 +969,9 @@ describe("Account Pool settings", () => {
           label: "Second",
         }),
       ]);
-      const handle = await slot.findByRole("button", { name: "Reorder First" });
+      const handle = await slot.findByRole("button", {
+        name: "Переместить First",
+      });
       await keyboardMove(handle, action === "cancel" ? "ArrowDown" : "ArrowUp");
       fireEvent.keyDown(document, {
         code: action === "cancel" ? "Escape" : "Space",
@@ -802,9 +984,9 @@ describe("Account Pool settings", () => {
       ).toEqual([]);
       expect(
         slot
-          .getAllByRole("button", { name: /Reorder/ })
+          .getAllByRole("button", { name: /Переместить/ })
           .map((button) => button.getAttribute("aria-label")),
-      ).toEqual(["Reorder First", "Reorder Second"]);
+      ).toEqual(["Переместить First", "Переместить Second"]);
     },
   );
 });
