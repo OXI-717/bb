@@ -71,3 +71,8 @@ available through the CLI:
 
 Writes remain strict. Run, pause, and resume reject damaged records; update
 succeeds only when the resulting complete record is canonical.
+
+Additional New automation menu entries can be configured with
+`bb plugin config automations set creationPresets '<JSON array>'`.
+Each entry supplies label, description and prompt (up to 20, unique labels).
+Selection opens an unsent draft with that exact prompt; no schedule is created.
