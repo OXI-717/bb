@@ -40,9 +40,11 @@ export const CURSOR_PROXIED_PATHS: readonly string[] = [
 
 const EXCHANGE_TIMEOUT_MS = 15_000;
 const TOKEN_EXPIRY_SAFETY_MS = 60_000;
+// `accept-encoding` is deliberately absent: the hub strips `content-encoding` from the
+// response it relays, so asking upstream to compress leaves the client decoding gzip it
+// was never told about — which surfaces as "[internal] Protocol error" mid-stream.
 const ALLOWED_REQUEST_HEADERS = new Set([
   "accept",
-  "accept-encoding",
   "content-type",
   "user-agent",
 ]);

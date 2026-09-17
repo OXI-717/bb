@@ -716,6 +716,7 @@ describe("Account Pool plugin", () => {
           "content-type": "application/connect+proto",
           authorization: `Bearer ${fixture.key}`,
           "x-cursor-streaming": "true",
+          "accept-encoding": "gzip",
           "x-unrelated-header": "dropped",
         },
         body,
@@ -732,6 +733,9 @@ describe("Account Pool plugin", () => {
       "Bearer minted-access-token",
     );
     expect(requests[0]?.headers.get("x-cursor-streaming")).toBe("true");
+    // Compression must not be negotiated upstream: the hub drops `content-encoding` on
+    // the way back, and the client would be handed gzip it cannot account for.
+    expect(requests[0]?.headers.has("accept-encoding")).toBe(false);
     expect(requests[0]?.headers.has("x-unrelated-header")).toBe(false);
     expect(await requests[0]?.text()).toBe(body);
   });
