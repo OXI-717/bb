@@ -51,3 +51,12 @@ bb automation delete <automationId> --project <id> --yes
 
 For partial updates, mode replacement, execution targets, or damaged records,
 read [references/updates.md](references/updates.md). Every command supports `--json`.
+
+## Additional creation menu items
+
+`bb plugin config automations set creationPresets '<JSON array>'` adds entries to
+Automations → New automation. Each entry has `label`, `description` and `prompt`.
+Labels must be unique; up to 20 entries. Selecting one opens the standard composer
+with the exact prompt, without submitting it or creating a schedule. This can route
+creation to an external service CLI. It does not import external jobs into BB history.
+Use `[]` to remove custom entries. Values are also available through the plugin settings SDK.
