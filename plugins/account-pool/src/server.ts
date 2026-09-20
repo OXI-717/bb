@@ -312,9 +312,7 @@ export function createAccountPoolPlugin(
         );
       }
     }
-    // Both the built-in Cursor agent and our own wrapper entry: the wrapper exists only
-    // to pass --agent-endpoint, and it needs the same routed credentials.
-    for (const cursorProviderId of ["acp-cursor", "acp-oxi-cursor"]) {
+    for (const cursorProviderId of ["acp-oxi-cursor"]) {
       bb.providers.experimental_contributeEnv(cursorProviderId, async (context) => {
       if (
         !(await operations.isRoutingEnabled("cursor")) ||
