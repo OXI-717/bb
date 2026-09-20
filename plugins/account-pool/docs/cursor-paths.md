@@ -53,3 +53,24 @@ token as the key, and the hub replies with that same token as both `accessToken`
 token only when a request is actually forwarded upstream (`cursor-adapter.ts`, `mint`).
 Forwarding this call instead would hand the machine a real renewable Cursor credential —
 the precise thing pooling exists to prevent.
+
+## Which provider the pool routes, and why only that one
+
+Pooled credentials go to `acp-oxi-cursor` alone. That provider is not declared in this
+repository: it is a custom ACP agent whose command is a wrapper, `cursor-route`, and both
+the agent entry (the ACP plugin's `customAgents` setting) and the wrapper are supplied by
+the operator. A machine that has not configured it gets no pooled Cursor at all.
+
+The built-in `acp-cursor` is deliberately excluded. Cursor reads the address of its agent
+stream from the server config it fetches, and only `--agent-endpoint` outranks it — in the
+CLI bundle that value comes from launch options and from no environment variable or config
+key. A plugin may contribute environment but not launch arguments
+(`experimental_contributeEnv` is the whole surface), and the built-in agent's arguments are
+fixed in the ACP plugin. Contributing a hub token to it therefore sent the agent stream
+straight to Cursor carrying a credential Cursor rejects: the thread answered `Please sign
+in to continue` while `bb pool status` reported a healthy account. Left unrouted, that
+agent falls back to the machine's own Cursor login and works.
+
+Hiding the built-in entry instead is not available: `acp-cursor` has `always` visibility
+and is therefore in `RESERVED_ACP_PROVIDER_IDS`, so no `customAgents` entry may take its
+id.

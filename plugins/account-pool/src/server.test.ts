@@ -654,14 +654,9 @@ describe("Account Pool plugin", () => {
         projectId: "project-one",
         hostId: "host-one",
       });
-    // `acp-oxi-cursor` launches `cursor-route`, which turns the hub address into
-    // `--agent-endpoint`, so its agent stream reaches the hub.
     expect((await envFor("acp-oxi-cursor")).map((entry) => entry.name)).toEqual(
       expect.arrayContaining(["CURSOR_API_ENDPOINT", "CURSOR_API_KEY"]),
     );
-    // The built-in agent has fixed launch arguments and cannot be handed that flag:
-    // pooled credentials would send its stream to Cursor carrying a token Cursor
-    // rejects, and the session would answer "Please sign in to continue".
     expect(await envFor("acp-cursor")).toEqual([]);
   });
 

@@ -312,15 +312,6 @@ export function createAccountPoolPlugin(
         );
       }
     }
-    // Only our wrapper entry, never the built-in `acp-cursor`. Cursor takes the address
-    // of its agent stream from the server config it fetches, and only `--agent-endpoint`
-    // outranks it — a flag the built-in agent cannot be given, because its launch
-    // arguments are fixed in the ACP plugin and a plugin may contribute environment but
-    // not arguments. Hand the built-in a hub token anyway and it opens that stream
-    // straight at Cursor carrying a credential Cursor rejects: the session answers
-    // "Please sign in to continue" while the pool reports perfect health. Left alone it
-    // falls back to the machine's own Cursor login, which is a working session; the
-    // pooled path is `acp-oxi-cursor`, which launches `cursor-route`.
     for (const cursorProviderId of ["acp-oxi-cursor"]) {
       bb.providers.experimental_contributeEnv(cursorProviderId, async (context) => {
       if (
