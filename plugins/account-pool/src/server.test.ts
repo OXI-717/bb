@@ -145,7 +145,7 @@ async function resolveCursorToken(
   return (
     await resolveAcpEnv(
       host,
-      "acp-cursor",
+      "acp-oxi-cursor",
       "CURSOR_API_KEY",
       "CURSOR_API_ENDPOINT",
     )
@@ -639,6 +639,31 @@ describe("Account Pool plugin", () => {
       expect(quota?.sevenDayUtilization).toBe(0.45);
     },
   );
+
+  it("routes the wrapper entry and leaves the built-in Cursor agent on its own login", async () => {
+    const fixture = await createFixture({
+      upstreamUrl: "https://upstream.example",
+      provider: "cursor",
+      source: "api-key",
+      apiKey: "cursor-subscription-key",
+      options: { fetch: async () => pytestUnreachable() },
+    });
+    const envFor = async (providerId: string) =>
+      fixture.host.harness.behavior.resolveProviderEnv(providerId, {
+        threadId: `thread-${providerId}`,
+        projectId: "project-one",
+        hostId: "host-one",
+      });
+    // `acp-oxi-cursor` launches `cursor-route`, which turns the hub address into
+    // `--agent-endpoint`, so its agent stream reaches the hub.
+    expect((await envFor("acp-oxi-cursor")).map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["CURSOR_API_ENDPOINT", "CURSOR_API_KEY"]),
+    );
+    // The built-in agent has fixed launch arguments and cannot be handed that flag:
+    // pooled credentials would send its stream to Cursor carrying a token Cursor
+    // rejects, and the session would answer "Please sign in to continue".
+    expect(await envFor("acp-cursor")).toEqual([]);
+  });
 
   it("answers Cursor's key exchange with the machine's own pool token", async () => {
     const fixture = await createFixture({
