@@ -647,6 +647,29 @@ The canonical release summary.
     ).not.toContain("opacity-");
   });
 
+  it("не выдаёт «Up to date», когда последняя версия неизвестна", async () => {
+    useDesktopUpdateInfoMock.mockReturnValue({
+      desktopApi: null,
+      desktopInfo: null,
+      isDesktop: false,
+    });
+    const machine = makeMachine({
+      host: makeHost({ id: "host_1", name: "workstation" }),
+      isPrimary: true,
+    });
+    const codex = machine.providerStatus!.codex;
+    machine.providerStatus!.codex = { ...codex, latestVersion: null };
+    useUpdateInventoryMock.mockReturnValue(
+      makeInventory({ lastCheckedAt: Date.now(), machines: [machine] }),
+    );
+
+    renderSection({});
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Latest unknown").length).toBeGreaterThan(0);
+    });
+  });
+
   it("does not call an offline fleet all in sync", async () => {
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
