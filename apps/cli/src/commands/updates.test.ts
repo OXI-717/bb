@@ -30,9 +30,6 @@ describe("providerState", () => {
   });
 
   it("does not claim up to date when the latest version could not be resolved", () => {
-    // Живой случай 2026-09-21: на машине, где у пользователя демона нет npm,
-    // npmLatestVersion возвращает null. Прежняя ветка отчитывалась «Up to date»
-    // для Codex 0.154.0, хотя последняя была 0.155.1.
     expect(providerState(status({ latestVersion: null }))).toBe(
       "latest-unknown",
     );

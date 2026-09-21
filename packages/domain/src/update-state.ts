@@ -67,7 +67,7 @@ export const UPDATE_STATE_PRESENTATION: Record<
     tone: "muted",
   },
   "latest-unknown": {
-    icon: "CircleHelp",
+    icon: "CircleQuestion",
     label: "Latest unknown",
     tone: "muted",
   },

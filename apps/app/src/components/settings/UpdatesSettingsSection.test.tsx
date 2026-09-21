@@ -648,8 +648,6 @@ The canonical release summary.
   });
 
   it("не выдаёт «Up to date», когда последняя версия неизвестна", async () => {
-    // Живой случай 2026-09-21: на машине без npm у пользователя демона bb не может
-    // узнать latest и прежде показывал «Up to date» для отставшей версии.
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
       desktopInfo: null,
