@@ -647,6 +647,31 @@ The canonical release summary.
     ).not.toContain("opacity-");
   });
 
+  it("не выдаёт «Up to date», когда последняя версия неизвестна", async () => {
+    // Живой случай 2026-09-21: на машине без npm у пользователя демона bb не может
+    // узнать latest и прежде показывал «Up to date» для отставшей версии.
+    useDesktopUpdateInfoMock.mockReturnValue({
+      desktopApi: null,
+      desktopInfo: null,
+      isDesktop: false,
+    });
+    const machine = makeMachine({
+      host: makeHost({ id: "host_1", name: "workstation" }),
+      isPrimary: true,
+    });
+    const codex = machine.providerStatus!.codex;
+    machine.providerStatus!.codex = { ...codex, latestVersion: null };
+    useUpdateInventoryMock.mockReturnValue(
+      makeInventory({ lastCheckedAt: Date.now(), machines: [machine] }),
+    );
+
+    renderSection({});
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Latest unknown").length).toBeGreaterThan(0);
+    });
+  });
+
   it("does not call an offline fleet all in sync", async () => {
     useDesktopUpdateInfoMock.mockReturnValue({
       desktopApi: null,
