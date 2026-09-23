@@ -18,10 +18,15 @@ import {
 } from "jotai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ThreadListEntry } from "@bb/domain";
-import { ActiveSidebarModeSections, MachineModeSections } from "./ProjectList";
+import {
+  ActiveSidebarModeSections,
+  MachineModeSections,
+  ProjectCollapseControls,
+} from "./ProjectList";
 import { buildMachineThreadGroups } from "@bb/client-core";
 import {
   collapsedSidebarSectionIdsAtom,
+  collapsedProjectIdsAtom,
   sidebarCollapsedMachinesAtom,
   sidebarManualSectionOrderAtom,
   sidebarMachineSectionOrderAtom,
@@ -190,6 +195,34 @@ afterEach(() => {
 });
 
 describe("sidebar organization mode sections", () => {
+  it("collapses and expands every project and main section", () => {
+    const store = createStore();
+    store.set(collapsedProjectIdsAtom, []);
+    store.set(collapsedSidebarSectionIdsAtom, []);
+    render(
+      <JotaiProvider store={store}>
+        <ProjectCollapseControls
+          projectIds={["a", "b"]}
+          sectionIds={["pinned", "threads"]}
+        />
+      </JotaiProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Collapse all projects" }),
+    );
+    expect(store.get(collapsedProjectIdsAtom)).toEqual(["a", "b"]);
+    expect(store.get(collapsedSidebarSectionIdsAtom)).toEqual([
+      "pinned",
+      "threads",
+    ]);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Expand all projects" }),
+    );
+    expect(store.get(collapsedProjectIdsAtom)).toEqual([]);
+    expect(store.get(collapsedSidebarSectionIdsAtom)).toEqual([]);
+  });
   it("does not mount inactive ordering or machine-grouping work", async () => {
     const store = createStore();
     store.set(sidebarSectionOrderAtom, ["threads", "project:a", "pinned"]);

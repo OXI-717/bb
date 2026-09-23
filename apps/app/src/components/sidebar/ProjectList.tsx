@@ -723,6 +723,58 @@ interface ProjectModeSectionsProps
   threadsSection: Omit<BuiltInSidebarSectionOptions, "content">;
 }
 
+export function ProjectCollapseControls({
+  projectIds,
+  sectionIds,
+}: {
+  projectIds: readonly string[];
+  sectionIds: readonly CollapsibleSidebarSectionId[];
+}) {
+  const [collapsedProjects, setCollapsedProjects] = useAtom(
+    collapsedProjectIdsAtom,
+  );
+  const [collapsedSections, setCollapsedSections] = useAtom(
+    collapsedSidebarSectionIdsAtom,
+  );
+  const allCollapsed =
+    projectIds.every((id) => collapsedProjects.includes(id)) &&
+    sectionIds.every((id) => collapsedSections.includes(id));
+
+  return (
+    <div className="flex justify-end px-3 py-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-label={
+          allCollapsed ? "Expand all projects" : "Collapse all projects"
+        }
+        onClick={() => {
+          if (allCollapsed) {
+            const projectSet = new Set(projectIds);
+            const sectionSet = new Set(sectionIds);
+            setCollapsedProjects((current) =>
+              current.filter((id) => !projectSet.has(id)),
+            );
+            setCollapsedSections((current) =>
+              current.filter((id) => !sectionSet.has(id)),
+            );
+          } else {
+            setCollapsedProjects((current) => [
+              ...new Set([...current, ...projectIds]),
+            ]);
+            setCollapsedSections((current) => [
+              ...new Set([...current, ...sectionIds]),
+            ]);
+          }
+        }}
+      >
+        {allCollapsed ? "Expand all" : "Collapse all"}
+      </Button>
+    </div>
+  );
+}
+
 function ProjectModeSections({
   collapsedEnvironmentIds,
   collapsedSectionIds,
@@ -941,46 +993,52 @@ function ProjectModeSections({
   };
 
   return (
-    <ReorderableSidebarSectionOrderList order={order} threadDnd={threadDnd}>
-      {(sectionId, consumeClickSuppression) => {
-        const builtInSection = renderBuiltInSidebarSection({
-          sectionId,
-          sections: builtInSections,
-          disabled: reorderDisabled,
-          collapsedSectionIds,
-          onToggleCollapsed,
-          consumeClickSuppression,
-          showPinnedSection,
-        });
-        if (builtInSection !== undefined) return builtInSection;
-        const row = projectRowsBySectionId.get(sectionId);
-        if (!row) return null;
-        return (
-          <SortableProjectRow
-            key={sectionId}
-            sortableId={sectionId}
-            project={row.project}
-            rootItems={projectItemsByProjectId.get(row.project.id)}
-            threadListState={row.threadListState}
-            progressiveDisclosureEnabled={progressiveDisclosureEnabled}
-            selectedThreadId={selectedThreadId}
-            isActive={row.isActive}
-            isCollapsed={collapsedProjectIds.has(row.project.id)}
-            collapsedThreadIds={collapsedThreadIds}
-            collapsedEnvironmentIds={collapsedEnvironmentIds}
-            compareThreads={compareThreads}
-            isLocalPathInvalid={row.isLocalPathInvalid}
-            onProjectSelect={onProjectSelect}
-            onCreateProjectThread={onCreateProjectThread}
-            onToggleProjectCollapsed={toggleProjectCollapsed}
-            onToggleThreadCollapsed={onToggleThreadCollapsed}
-            onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
-            reorderDisabled={reorderDisabled}
-            consumeProjectClickSuppression={consumeClickSuppression}
-          />
-        );
-      }}
-    </ReorderableSidebarSectionOrderList>
+    <>
+      <ProjectCollapseControls
+        projectIds={projects.map((project) => project.id)}
+        sectionIds={order.filter(isCollapsibleSidebarSectionId)}
+      />
+      <ReorderableSidebarSectionOrderList order={order} threadDnd={threadDnd}>
+        {(sectionId, consumeClickSuppression) => {
+          const builtInSection = renderBuiltInSidebarSection({
+            sectionId,
+            sections: builtInSections,
+            disabled: reorderDisabled,
+            collapsedSectionIds,
+            onToggleCollapsed,
+            consumeClickSuppression,
+            showPinnedSection,
+          });
+          if (builtInSection !== undefined) return builtInSection;
+          const row = projectRowsBySectionId.get(sectionId);
+          if (!row) return null;
+          return (
+            <SortableProjectRow
+              key={sectionId}
+              sortableId={sectionId}
+              project={row.project}
+              rootItems={projectItemsByProjectId.get(row.project.id)}
+              threadListState={row.threadListState}
+              progressiveDisclosureEnabled={progressiveDisclosureEnabled}
+              selectedThreadId={selectedThreadId}
+              isActive={row.isActive}
+              isCollapsed={collapsedProjectIds.has(row.project.id)}
+              collapsedThreadIds={collapsedThreadIds}
+              collapsedEnvironmentIds={collapsedEnvironmentIds}
+              compareThreads={compareThreads}
+              isLocalPathInvalid={row.isLocalPathInvalid}
+              onProjectSelect={onProjectSelect}
+              onCreateProjectThread={onCreateProjectThread}
+              onToggleProjectCollapsed={toggleProjectCollapsed}
+              onToggleThreadCollapsed={onToggleThreadCollapsed}
+              onToggleEnvironmentCollapsed={onToggleEnvironmentCollapsed}
+              reorderDisabled={reorderDisabled}
+              consumeProjectClickSuppression={consumeClickSuppression}
+            />
+          );
+        }}
+      </ReorderableSidebarSectionOrderList>
+    </>
   );
 }
 
