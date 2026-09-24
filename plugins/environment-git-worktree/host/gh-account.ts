@@ -67,6 +67,11 @@ async function readMarkedGhAccountLogin(
   return login;
 }
 
+const CLEARED_GIT_CONFIG_ENV: NodeJS.ProcessEnv = {
+  GIT_CONFIG_PARAMETERS: "",
+  GIT_CONFIG_COUNT: "0",
+};
+
 async function readRawRemoteUrl(
   sourcePath: string,
   remote: string,
@@ -75,6 +80,7 @@ async function readRawRemoteUrl(
   const result = await runGit(["config", "--get", `remote.${remote}.url`], {
     cwd: sourcePath,
     allowFailure: true,
+    env: { ...CLEARED_GIT_CONFIG_ENV },
     ...(signal !== undefined ? { signal } : {}),
   });
   if (result.exitCode !== 0) {
@@ -162,7 +168,7 @@ async function resolveMarkedGhAccountToken(
 }
 
 function ghAccountCredentialHelper(login: string): string {
-  return `!f() { test "$1" = get || exit 0; protocol=; host=; while IFS= read -r line && test -n "$line"; do case "$line" in protocol=*) protocol=\${line#protocol=} ;; host=*) host=\${line#host=} ;; esac; done; if test "$protocol" = https && test "$host" = github.com; then token=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --user ${login} --hostname github.com 2>/dev/null) || exit 0; test -n "$token" && printf "username=x-access-token\\npassword=%s\\n" "$token"; fi; }; f`;
+  return `!f() { test "$1" = get || exit 0; protocol=; host=; while IFS= read -r line && test -n "$line"; do case "$line" in protocol=*) protocol=\${line#protocol=} ;; host=*) host=\${line#host=} ;; esac; done; protocol=$(printf '%s' "$protocol" | tr '[:upper:]' '[:lower:]'); host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]'); host=\${host%:443}; if test "$protocol" = https && test "$host" = github.com; then token=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --user ${login} --hostname github.com 2>/dev/null) || exit 0; test -n "$token" && printf "username=x-access-token\\npassword=%s\\n" "$token"; fi; }; f`;
 }
 
 export interface MarkedGhAccountFetch {
@@ -192,10 +198,7 @@ export async function resolveMarkedGhAccountFetch(args: {
       login,
       transport: "ssh",
       token: null,
-      env: {
-        GIT_CONFIG_PARAMETERS: "",
-        GIT_CONFIG_COUNT: "0",
-      },
+      env: { ...CLEARED_GIT_CONFIG_ENV },
     };
   }
   const token = await resolveMarkedGhAccountToken(login, args.signal);
@@ -204,7 +207,7 @@ export async function resolveMarkedGhAccountFetch(args: {
     transport: "https-github",
     token,
     env: {
-      GIT_CONFIG_PARAMETERS: "",
+      ...CLEARED_GIT_CONFIG_ENV,
       GIT_CONFIG_COUNT: "2",
       GIT_CONFIG_KEY_0: "credential.helper",
       GIT_CONFIG_VALUE_0: "",

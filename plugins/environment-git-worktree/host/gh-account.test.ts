@@ -53,7 +53,7 @@ const FAKE_HTTPS_HELPER_SCRIPT = [
   "      printf 'connect\\n\\n'",
   "      ;;",
   "    connect*)",
-  '      creds="$(printf \'protocol=https\\nhost=github.com\\n\\n\' | git credential fill)"',
+  '      creds="$(printf \'url=%s\\n\\n\' "$2" | git credential fill)"',
   '      password="$(printf \'%s\\n\' "$creds" | sed -n \'s/^password=//p\')"',
   '      if [ "$password" != "$EXPECTED_FETCH_TOKEN" ]; then',
   '        echo "unexpected credential password" >&2',
@@ -322,6 +322,103 @@ describe("gh-account marker fetch environment", () => {
     expect(existsSync(fixture.httpsLog)).toBe(false);
     expect(transcript.map((entry) => entry.text).join("\n")).toContain(
       "SSH remote natively",
+    );
+  });
+
+  it("classifies the repository remote under cleared git config overrides", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        EXPECTED_FETCH_TOKEN: "marked-account-token",
+        GIT_CONFIG_COUNT: "5",
+        GIT_CONFIG_KEY_4: "remote.origin.url",
+        GIT_CONFIG_VALUE_4: "git@github.com:octo/private.git",
+        GIT_CONFIG_PARAMETERS:
+          "'remote.origin.url'='git@github.com:octo/private.git'",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture),
+    );
+    expect(await readFile(fixture.ghLog, "utf8")).toContain(
+      "auth token --user marked-user --hostname github.com",
+    );
+    expect(await readFile(fixture.httpsLog, "utf8")).toContain(
+      "git-config-count=2",
+    );
+    expect(existsSync(fixture.sshLog)).toBe(false);
+    expect(
+      await git(fixture.sourcePath, "rev-parse", "--verify", "origin/main"),
+    ).toBeTruthy();
+  });
+
+  it.each([
+    "https://GITHUB.COM/octo/private.git",
+    "https://github.com:443/octo/private.git",
+    "https://GITHUB.COM:443/octo/private.git",
+  ])(
+    "fetches a marked GitHub HTTPS URL %s as the declared account",
+    async (remoteUrl) => {
+      const fixture = await createRemoteFixture(remoteUrl);
+      await writeFile(
+        join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+        "marked-user\n",
+      );
+      await withProcessEnv(
+        fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "marked-account-token" }),
+        () => fetchMain(fixture),
+      );
+      expect(await readFile(fixture.ghLog, "utf8")).toContain(
+        "auth token --user marked-user --hostname github.com",
+      );
+      expect(
+        await git(fixture.sourcePath, "rev-parse", "--verify", "origin/main"),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each([
+    "https://github.com.attacker.example/octo/private.git",
+    "https://gitlab.com/octo/private.git",
+  ])(
+    "keeps ambient credentials for a marked non-GitHub remote %s",
+    async (remoteUrl) => {
+      const fixture = await createRemoteFixture(remoteUrl);
+      await writeFile(
+        join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+        "marked-user\n",
+      );
+      await withProcessEnv(
+        fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "" }),
+        () => fetchMain(fixture),
+      );
+      expect(existsSync(fixture.ghLog)).toBe(false);
+    },
+  );
+
+  it("does not emit the declared token to a non-default GitHub port", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com:8443/octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "" }),
+      () => fetchMain(fixture),
+    );
+    expect(await readFile(fixture.ghLog, "utf8")).toContain(
+      "auth token --user marked-user --hostname github.com",
+    );
+    expect(await readFile(fixture.httpsLog, "utf8")).toContain(
+      "git-config-count=2",
     );
   });
 

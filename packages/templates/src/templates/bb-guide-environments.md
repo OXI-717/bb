@@ -84,6 +84,18 @@ Making your repo work with bb:
   Large directories such as node_modules are copied file by file. Install
   dependencies in .bb-env-setup.sh instead of listing them here.
 
+  Commit a .gh-account file at the repo root when a managed worktree's remote
+  base fetch must authenticate to github.com as a specific GitHub account on
+  the selected machine. The file must be a regular file (not a symlink)
+  containing one bare login, such as octocat. For HTTPS github.com remotes bb
+  resolves that account through `gh auth token --user <login>` without
+  inherited GH_* tokens and fetches through a process-local credential helper
+  that answers only HTTPS github.com; inherited GIT_CONFIG_* helpers are
+  ignored for that fetch. SSH remotes fetch natively and never invoke gh. An
+  invalid marker, or an account the machine's gh cannot resolve, fails
+  provisioning before the worktree is created. Without the marker, fetches
+  keep the machine's ambient credentials.
+
   For files that customize agent instructions and skills (AGENTS.md,
   .bb/AGENTS.md, .bb/skills/), run `bb guide agent-configuration`.
 
