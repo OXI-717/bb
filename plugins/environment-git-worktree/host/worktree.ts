@@ -32,8 +32,9 @@ import {
 } from "bb-environment-provider-host/transcript";
 import {
   GH_ACCOUNT_MARKER_FILE_NAME,
-  redactMarkedFetchError,
   resolveMarkedGhAccountFetch,
+  sanitizeMarkedFetchError,
+  type MarkedGhAccountFetch,
 } from "./gh-account.js";
 import {
   copyWorktreeIncludeFiles,
@@ -284,10 +285,11 @@ export async function fetchRemoteBaseBranch(args: {
   const remoteRef = `refs/remotes/${remoteBase.remote}/${remoteBase.branch}`;
   const refspec = `+refs/heads/${remoteBase.branch}:${remoteRef}`;
   const gitProcessOptions = signalOptions(args.signal);
+  let markedFetch: MarkedGhAccountFetch | null = null;
   try {
     throwIfProvisionAborted(args.signal);
     const commonDir = await getGitCommonDir(args.sourcePath, gitProcessOptions);
-    const markedFetch = await resolveMarkedGhAccountFetch({
+    markedFetch = await resolveMarkedGhAccountFetch({
       sourcePath: args.sourcePath,
       remote: remoteBase.remote,
       signal: args.signal,
@@ -320,7 +322,6 @@ export async function fetchRemoteBaseBranch(args: {
           args.signal !== undefined ? { signal: args.signal } : {},
         );
       } catch (error) {
-        redactMarkedFetchError(error, markedFetch?.token ?? null);
         if (args.signal?.aborted && !isProvisionAbortError(error)) {
           throw createProvisionCancelledError(error);
         }
@@ -386,7 +387,7 @@ export async function fetchRemoteBaseBranch(args: {
       startedAt,
       metadata: { durationMs: Date.now() - startedAt },
     });
-    throw error;
+    throw sanitizeMarkedFetchError(error, markedFetch?.token ?? null);
   }
 }
 

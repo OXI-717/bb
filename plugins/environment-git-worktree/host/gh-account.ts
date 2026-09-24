@@ -214,23 +214,22 @@ export async function resolveMarkedGhAccountFetch(args: {
   };
 }
 
-export function redactMarkedFetchError(
+export function sanitizeMarkedFetchError(
   error: unknown,
   token: string | null,
-): void {
-  if (!token || !(error instanceof Error)) {
-    return;
+): unknown {
+  if (!token) {
+    return error;
   }
   const scrub = (text: string): string =>
     text.split(token).join(GIT_FETCH_SECRET_PLACEHOLDER);
-  try {
-    error.message = scrub(error.message);
-  } catch {}
-  const withStderr = error as Error & { stderr?: unknown };
-  if (typeof withStderr.stderr === "string") {
-    try {
-      withStderr.stderr = scrub(withStderr.stderr);
-    } catch {}
+  if (error instanceof WorkspaceError) {
+    return new WorkspaceError(error.code, scrub(error.message));
   }
-  redactMarkedFetchError(error.cause, token);
+  if (error instanceof Error) {
+    const safe = new Error(scrub(error.message));
+    safe.name = error.name;
+    return safe;
+  }
+  return new WorkspaceError("git_command_failed", "git fetch failed");
 }

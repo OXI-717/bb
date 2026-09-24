@@ -14,7 +14,10 @@ import { promisify } from "node:util";
 import { WorkspaceError } from "bb-environment-provider-host/git";
 import type { ProvisioningTranscriptEntry } from "bb-environment-provider-host/transcript";
 import { afterEach, describe, expect, it } from "vitest";
-import { GH_ACCOUNT_MARKER_FILE_NAME } from "./gh-account.js";
+import {
+  GH_ACCOUNT_MARKER_FILE_NAME,
+  sanitizeMarkedFetchError,
+} from "./gh-account.js";
 import { createWorktree, fetchRemoteBaseBranch } from "./worktree.js";
 
 const execFileAsync = promisify(execFile);
@@ -364,6 +367,7 @@ describe("gh-account marker fetch environment", () => {
     expect(failure).toBeInstanceOf(WorkspaceError);
     const workspaceError = failure as WorkspaceError;
     expect(workspaceError.code).toBe("git_command_failed");
+    expect(workspaceError.cause).toBeUndefined();
     expect(workspaceError.message).not.toContain("marked-account-token");
     expect(workspaceError.message).toContain("<redacted>");
     let serialized = "";
@@ -468,5 +472,79 @@ describe("gh-account marker fetch environment", () => {
     expect(existsSync(fixture.ghLog)).toBe(true);
     expect(existsSync(fixture.httpsLog)).toBe(false);
     expect(existsSync(targetPath)).toBe(false);
+  });
+});
+
+describe("sanitizeMarkedFetchError", () => {
+  const token = "marked-account-token";
+
+  it("passes errors through untouched when no token was resolved", () => {
+    const error = new WorkspaceError(
+      "git_command_failed",
+      `fetch failed ${token}`,
+    );
+    expect(sanitizeMarkedFetchError(error, null)).toBe(error);
+    expect(error.message).toContain(token);
+  });
+
+  it("rebuilds a WorkspaceError keeping its code and dropping the cause", () => {
+    const cyclic: Error & { cause?: unknown } = new Error(`inner ${token}`);
+    cyclic.cause = cyclic;
+    const error = new WorkspaceError(
+      "git_command_failed",
+      `fetch failed: ${token}`,
+      { cause: cyclic },
+    );
+    const safe = sanitizeMarkedFetchError(error, token) as WorkspaceError;
+    expect(safe).toBeInstanceOf(WorkspaceError);
+    expect(safe.code).toBe("git_command_failed");
+    expect(safe.message).not.toContain(token);
+    expect(safe.message).toContain("<redacted>");
+    expect(safe.cause).toBeUndefined();
+    expect(error.message).toContain(token);
+    expect(cyclic.message).toContain(token);
+  });
+
+  it("preserves cancellation and timeout categories", () => {
+    for (const code of ["provision_cancelled", "git_command_timeout"]) {
+      const error = new WorkspaceError(code, `wrapped ${token}`);
+      const safe = sanitizeMarkedFetchError(error, token) as WorkspaceError;
+      expect(safe.code).toBe(code);
+      expect(safe.message).not.toContain(token);
+    }
+  });
+
+  it("never traverses a deep cause chain", () => {
+    let error: Error & { cause?: unknown } = new Error(`leaf ${token}`);
+    for (let depth = 0; depth < 5000; depth += 1) {
+      const next: Error & { cause?: unknown } = new Error(
+        `wrap ${depth} ${token}`,
+      );
+      next.cause = error;
+      error = next;
+    }
+    const safe = sanitizeMarkedFetchError(error, token) as Error;
+    expect(safe.message).not.toContain(token);
+    expect(safe.message).toContain("wrap 4999");
+    expect(safe.cause).toBeUndefined();
+  });
+
+  it("copies a non-writable message and bounds non-Error throws", () => {
+    const error = new Error("placeholder");
+    Object.defineProperty(error, "message", {
+      value: `leaked ${token}`,
+      writable: false,
+    });
+    const safe = sanitizeMarkedFetchError(error, token) as Error;
+    expect(safe).not.toBe(error);
+    expect(safe.message).toBe(`leaked <redacted>`);
+    expect(error.message).toContain(token);
+    const primitive = sanitizeMarkedFetchError(
+      `stderr ${token}`,
+      token,
+    ) as WorkspaceError;
+    expect(primitive).toBeInstanceOf(WorkspaceError);
+    expect(primitive.code).toBe("git_command_failed");
+    expect(primitive.message).not.toContain(token);
   });
 });
