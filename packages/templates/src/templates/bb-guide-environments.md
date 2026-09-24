@@ -90,8 +90,9 @@ Making your repo work with bb:
   containing one bare login, such as octocat. For HTTPS github.com remotes bb
   resolves that account through `gh auth token --user <login>` without
   inherited GH_* tokens and fetches through a process-local credential helper
-  that answers only HTTPS github.com; inherited GIT_CONFIG_* helpers are
-  ignored for that fetch. SSH remotes fetch natively and never invoke gh. An
+  that answers only HTTPS github.com; inherited GIT_CONFIG_* helpers and
+  ambient http.extraHeader entries (including URL-scoped ones) are neutralized
+  for that fetch. SSH remotes fetch natively and never invoke gh. An
   invalid marker, an HTTPS github.com remote URL that embeds credentials, or
   an account the machine's gh cannot resolve, fails provisioning before the
   worktree is created. Without the marker, fetches

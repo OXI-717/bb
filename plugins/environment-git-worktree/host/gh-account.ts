@@ -192,6 +192,46 @@ function ghAccountCredentialHelper(login: string): string {
   return `!f() { test "$1" = get || exit 0; protocol=; host=; while IFS= read -r line && test -n "$line"; do case "$line" in protocol=*) protocol=\${line#protocol=} ;; host=*) host=\${line#host=} ;; esac; done; protocol=$(printf '%s' "$protocol" | tr '[:upper:]' '[:lower:]'); host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]'); host=\${host%:443}; if test "$protocol" = https && test "$host" = github.com; then token=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --user ${login} --hostname github.com 2>/dev/null) || exit 0; test -n "$token" && printf "username=x-access-token\\npassword=%s\\n" "$token"; fi; }; f`;
 }
 
+const AUTH_CONFIG_RESET_PATTERN =
+  /^(?:http\..+\.extraheader|credential\..+\.helper)$/;
+
+async function listMarkedFetchConfigResets(
+  sourcePath: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> {
+  const result = await runGit(
+    [
+      "config",
+      "--null",
+      "--name-only",
+      "--get-regexp",
+      "^(http|credential)\..+\.(extraheader|helper)$",
+    ],
+    {
+      cwd: sourcePath,
+      allowFailure: true,
+      env: { ...CLEARED_GIT_CONFIG_ENV },
+      ...(signal !== undefined ? { signal } : {}),
+    },
+  );
+  if (result.exitCode === 1) {
+    return [];
+  }
+  if (result.exitCode !== 0) {
+    throw new WorkspaceError(
+      "git_command_failed",
+      `git config could not enumerate ambient credential or header settings for the ${GH_ACCOUNT_MARKER_FILE_NAME}-marked fetch`,
+    );
+  }
+  const keys = new Set<string>();
+  for (const key of result.stdout.split("\0")) {
+    if (AUTH_CONFIG_RESET_PATTERN.test(key)) {
+      keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 export interface MarkedGhAccountFetch {
   login: string;
   transport: Exclude<MarkedRemoteKind, "other">;
@@ -228,19 +268,30 @@ export async function resolveMarkedGhAccountFetch(args: {
       `${GH_ACCOUNT_MARKER_FILE_NAME} in ${args.sourcePath} cannot select an account for a remote URL that embeds credentials`,
     );
   }
+  const resetKeys = await listMarkedFetchConfigResets(
+    args.sourcePath,
+    args.signal,
+  );
+  const configEntries: Array<readonly [string, string]> = [
+    ...resetKeys.map((key) => [key, ""] as const),
+    ["http.extraheader", ""],
+    ["credential.helper", ""],
+    ["credential.helper", ghAccountCredentialHelper(login)],
+  ];
+  const env: NodeJS.ProcessEnv = {
+    ...CLEARED_GIT_CONFIG_ENV,
+    GIT_CONFIG_COUNT: String(configEntries.length),
+  };
+  configEntries.forEach(([key, value], index) => {
+    env[`GIT_CONFIG_KEY_${index}`] = key;
+    env[`GIT_CONFIG_VALUE_${index}`] = value;
+  });
   const token = await resolveMarkedGhAccountToken(login, args.signal);
   return {
     login,
     transport: "https-github",
     token,
-    env: {
-      ...CLEARED_GIT_CONFIG_ENV,
-      GIT_CONFIG_COUNT: "2",
-      GIT_CONFIG_KEY_0: "credential.helper",
-      GIT_CONFIG_VALUE_0: "",
-      GIT_CONFIG_KEY_1: "credential.helper",
-      GIT_CONFIG_VALUE_1: ghAccountCredentialHelper(login),
-    },
+    env,
   };
 }
 

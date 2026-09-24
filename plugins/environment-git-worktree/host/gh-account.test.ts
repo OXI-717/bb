@@ -16,6 +16,7 @@ import type { ProvisioningTranscriptEntry } from "bb-environment-provider-host/t
 import { afterEach, describe, expect, it } from "vitest";
 import {
   GH_ACCOUNT_MARKER_FILE_NAME,
+  resolveMarkedGhAccountFetch,
   sanitizeMarkedFetchError,
 } from "./gh-account.js";
 import { createWorktree, fetchRemoteBaseBranch } from "./worktree.js";
@@ -282,7 +283,7 @@ describe("gh-account marker fetch environment", () => {
       "auth token --user marked-user --hostname github.com",
     );
     expect(await readFile(fixture.httpsLog, "utf8")).toContain(
-      "git-config-count=2",
+      "git-config-count=3",
     );
     expect(
       await git(fixture.sourcePath, "rev-parse", "--verify", "origin/main"),
@@ -353,7 +354,7 @@ describe("gh-account marker fetch environment", () => {
       "auth token --user marked-user --hostname github.com",
     );
     expect(await readFile(fixture.httpsLog, "utf8")).toContain(
-      "git-config-count=2",
+      "git-config-count=3",
     );
     expect(existsSync(fixture.sshLog)).toBe(false);
     expect(
@@ -416,7 +417,7 @@ describe("gh-account marker fetch environment", () => {
       "auth token --user marked-user --hostname github.com",
     );
     expect(await readFile(fixture.httpsLog, "utf8")).toContain(
-      "git-config-count=2",
+      "git-config-count=3",
     );
     expect(existsSync(fixture.sshLog)).toBe(false);
   });
@@ -474,9 +475,146 @@ describe("gh-account marker fetch environment", () => {
       "auth token --user marked-user --hostname github.com",
     );
     expect(await readFile(fixture.httpsLog, "utf8")).toContain(
-      "git-config-count=2",
+      "git-config-count=3",
     );
     expect(existsSync(fixture.sshLog)).toBe(false);
+  });
+
+  it.each([
+    ["http.extraHeader", "Authorization: Bearer ambient-secret-header"],
+    [
+      "http.https://github.com/.extraHeader",
+      "Authorization: Bearer ambient-secret-header",
+    ],
+    [
+      "http.https://github.com/octo/.extraHeader",
+      "Proxy-Authorization: Basic ambient-proxy-secret",
+    ],
+    [
+      "http.https://github.com/octo/private.git/git-upload-pack.extraHeader",
+      "Authorization: Bearer ambient-secret-header",
+    ],
+    [
+      "http.https://github.com/octo/private.git/info/refs.extraHeader",
+      "Authorization: Bearer ambient-secret-header",
+    ],
+  ])(
+    "clears ambient auth header %s from the effective marked fetch",
+    async (key, secret) => {
+      const fixture = await createRemoteFixture(
+        "https://github.com/octo/private.git",
+      );
+      await git(fixture.sourcePath, "config", "--add", key, secret);
+      await writeFile(
+        join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+        "marked-user\n",
+      );
+      const fetchUrl = "https://github.com/octo/private.git";
+      await withProcessEnv(fixtureEnv(fixture), async () => {
+        const marked = await resolveMarkedGhAccountFetch({
+          sourcePath: fixture.sourcePath,
+          remote: "origin",
+          signal: undefined,
+        });
+        expect(marked?.transport).toBe("https-github");
+        await withProcessEnv(marked?.env ?? {}, async () => {
+          for (const endpoint of [
+            fetchUrl,
+            `${fetchUrl}/info/refs`,
+            `${fetchUrl}/git-upload-pack`,
+          ]) {
+            let header = "";
+            try {
+              ({ stdout: header } = await execFileAsync(
+                "git",
+                ["config", "--get-urlmatch", "http.extraheader", endpoint],
+                { cwd: fixture.sourcePath },
+              ));
+            } catch {
+              header = "";
+            }
+            expect(header).not.toContain("ambient-secret-header");
+            expect(header).not.toContain("ambient-proxy-secret");
+          }
+        });
+      });
+      await withProcessEnv(
+        fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "marked-account-token" }),
+        () => fetchMain(fixture),
+      );
+      expect(await readFile(fixture.ghLog, "utf8")).toContain(
+        "auth token --user marked-user --hostname github.com",
+      );
+    },
+  );
+
+  it("ignores a URL-scoped ambient credential helper for a marked fetch", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+    );
+    await git(
+      fixture.sourcePath,
+      "config",
+      "--file",
+      fixture.globalConfig,
+      "--add",
+      "credential.https://github.com.helper",
+      '!f() { test "$1" = get || exit 0; printf "username=x-access-token\\npassword=ambient-scoped-helper-token\\n"; }; f',
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(fixtureEnv(fixture), async () => {
+      const marked = await resolveMarkedGhAccountFetch({
+        sourcePath: fixture.sourcePath,
+        remote: "origin",
+        signal: undefined,
+      });
+      expect(marked?.transport).toBe("https-github");
+      const envEntries = Object.entries(marked?.env ?? {});
+      const reset = (key: string): boolean =>
+        envEntries.some(
+          ([name, value]) =>
+            name.startsWith("GIT_CONFIG_KEY_") &&
+            value === key &&
+            envEntries.some(
+              ([otherName, otherValue]) =>
+                otherName ===
+                  `GIT_CONFIG_VALUE_${name.slice("GIT_CONFIG_KEY_".length)}` &&
+                otherValue === "",
+            ),
+        );
+      expect(reset("credential.https://github.com.helper")).toBe(true);
+      let helpers = "";
+      await withProcessEnv(marked?.env ?? {}, async () => {
+        try {
+          ({ stdout: helpers } = await execFileAsync(
+            "git",
+            [
+              "config",
+              "--get-urlmatch",
+              "credential.helper",
+              "https://github.com/octo/private.git",
+            ],
+            { cwd: fixture.sourcePath },
+          ));
+        } catch {
+          helpers = "";
+        }
+      });
+      expect(helpers).not.toContain("ambient-scoped-helper-token");
+    });
+    await withProcessEnv(
+      fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "marked-account-token" }),
+      () => fetchMain(fixture),
+    );
+    expect(await readFile(fixture.ghLog, "utf8")).toContain(
+      "auth token --user marked-user --hostname github.com",
+    );
+    expect(
+      await git(fixture.sourcePath, "rev-parse", "--verify", "origin/main"),
+    ).toBeTruthy();
   });
 
   it("fails closed for a marked GitHub remote URL with embedded credentials", async () => {
@@ -604,7 +742,7 @@ describe("gh-account marker fetch environment", () => {
       "auth token --user marked-user --hostname github.com",
     );
     expect(await readFile(fixture.httpsLog, "utf8")).toContain(
-      "git-config-count=2",
+      "git-config-count=3",
     );
   });
 

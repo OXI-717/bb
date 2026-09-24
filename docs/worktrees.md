@@ -67,9 +67,12 @@ Contract:
   --hostname github.com` on the machine with ambient `GH_*` tokens removed,
   then fetches through a process-local credential helper that resolves the
   same account and answers only HTTPS github.com credential requests.
-  Inherited `GIT_CONFIG_*` entries are ignored for that fetch only; no global
-  Git config or credential store is written, and the token never enters the
-  fetch environment, arguments, URLs, or logs.
+  Inherited `GIT_CONFIG_*` entries are ignored for that fetch only, and
+  ambient credential helpers and `http.extraHeader` entries (including
+  URL-scoped ones) are neutralized so a stored `Authorization` header or
+  helper cannot override the declared account. No global Git config or
+  credential store is written, and the token never enters the fetch
+  environment, arguments, URLs, or logs.
 - An invalid marker, an HTTPS github.com remote URL that embeds credentials
   (such as `https://user:token@github.com/...`), or an account the machine's
   `gh` cannot resolve fails provisioning before the worktree is created — bb
