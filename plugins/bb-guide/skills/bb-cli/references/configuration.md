@@ -9,6 +9,11 @@
   file at the repo root to list untracked files, such as `.env`, that bb must
   copy from the source checkout. It uses gitignore pattern syntax. bb copies
   the matches before it runs `.bb-env-setup.sh`.
+- Commit `.gh-account` with one bare GitHub login (regular file, not a
+  symlink) to make remote base fetches for an HTTPS github.com remote use that
+  account from the machine's `gh` login; SSH remotes stay native, resolution
+  is fail-closed before worktree creation, and unmarked repositories keep
+  ambient credentials.
 
 - Hooks require ownership confirmed by successful provider creation. Attached
   checkout and personal-workspace paths skip both hooks. Server restart resumes

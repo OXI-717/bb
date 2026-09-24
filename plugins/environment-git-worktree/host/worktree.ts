@@ -31,6 +31,12 @@ import {
   type ProgressCallback,
 } from "bb-environment-provider-host/transcript";
 import {
+  GH_ACCOUNT_MARKER_FILE_NAME,
+  resolveMarkedGhAccountFetch,
+  sanitizeMarkedFetchError,
+  type MarkedGhAccountFetch,
+} from "./gh-account.js";
+import {
   copyWorktreeIncludeFiles,
   WORKTREE_INCLUDE_FILE_NAME,
   type CopyWorktreeIncludeFilesResult,
@@ -279,9 +285,29 @@ export async function fetchRemoteBaseBranch(args: {
   const remoteRef = `refs/remotes/${remoteBase.remote}/${remoteBase.branch}`;
   const refspec = `+refs/heads/${remoteBase.branch}:${remoteRef}`;
   const gitProcessOptions = signalOptions(args.signal);
+  let markedFetch: MarkedGhAccountFetch | null = null;
   try {
     throwIfProvisionAborted(args.signal);
     const commonDir = await getGitCommonDir(args.sourcePath, gitProcessOptions);
+    markedFetch = await resolveMarkedGhAccountFetch({
+      sourcePath: args.sourcePath,
+      remote: remoteBase.remote,
+      signal: args.signal,
+    });
+    if (markedFetch) {
+      emitOutput(
+        args.onProgress,
+        "git-fetch-account",
+        markedFetch.transport === "https-github"
+          ? `Fetching as GitHub account "${markedFetch.login}" declared by ${GH_ACCOUNT_MARKER_FILE_NAME}`
+          : `Fetching the SSH remote natively for the ${GH_ACCOUNT_MARKER_FILE_NAME}-marked repository`,
+      );
+    }
+    const fetchEnv: NodeJS.ProcessEnv = {
+      GIT_TERMINAL_PROMPT: "0",
+      LC_ALL: "C",
+      ...markedFetch?.env,
+    };
     const fetchBaseBranch = async (): Promise<void> => {
       try {
         await withGitRefMutationLock(
@@ -290,7 +316,7 @@ export async function fetchRemoteBaseBranch(args: {
             runGit(["fetch", "--quiet", remoteBase.remote, refspec], {
               cwd: args.sourcePath,
               ...gitProcessOptions,
-              env: { GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+              env: fetchEnv,
               timeoutMs: REMOTE_BASE_FETCH_TIMEOUT_MS,
             }),
           args.signal !== undefined ? { signal: args.signal } : {},
@@ -361,7 +387,7 @@ export async function fetchRemoteBaseBranch(args: {
       startedAt,
       metadata: { durationMs: Date.now() - startedAt },
     });
-    throw error;
+    throw sanitizeMarkedFetchError(error, markedFetch?.token ?? null);
   }
 }
 

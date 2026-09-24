@@ -32,6 +32,12 @@ removes that worktree. See [Worktrees, setup scripts, and teardown
 scripts](worktrees.md) for the lifecycle, environment, timeout, and failure
 contracts.
 
+Commit `.gh-account` containing one bare GitHub login (regular file, no
+symlink) when a managed worktree's remote base fetch for an HTTPS github.com
+remote must use a specific account from that machine's `gh` login. Resolution
+is fail-closed before worktree creation, SSH remotes stay native, and unmarked
+repositories keep ambient credentials. See [worktrees.md](worktrees.md).
+
 `bb-app config list` shows non-secret values. `bb-app env list` redacts every
 value and only shows whether a key is set.
 
