@@ -70,10 +70,12 @@ Contract:
   Inherited `GIT_CONFIG_*` entries are ignored for that fetch only; no global
   Git config or credential store is written, and the token never enters the
   fetch environment, arguments, URLs, or logs.
-- An invalid marker or an account the machine's `gh` cannot resolve fails
-  provisioning before the worktree is created — bb does not fall back to a
-  different ambient account. Repositories without the marker keep the ambient
-  behavior, and SSH remotes always fetch natively without invoking `gh`.
+- An invalid marker, an HTTPS github.com remote URL that embeds credentials
+  (such as `https://user:token@github.com/...`), or an account the machine's
+  `gh` cannot resolve fails provisioning before the worktree is created — bb
+  does not fall back to a different ambient account. Repositories without the
+  marker keep the ambient behavior, and SSH remotes always fetch natively
+  without invoking `gh`.
 
 ## Copy local files with `.worktreeinclude`
 

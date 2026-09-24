@@ -72,12 +72,12 @@ const CLEARED_GIT_CONFIG_ENV: NodeJS.ProcessEnv = {
   GIT_CONFIG_COUNT: "0",
 };
 
-async function readRawRemoteUrl(
+async function readRemoteFetchUrl(
   sourcePath: string,
   remote: string,
   signal: AbortSignal | undefined,
 ): Promise<string | null> {
-  const result = await runGit(["config", "--get", `remote.${remote}.url`], {
+  const result = await runGit(["remote", "get-url", remote], {
     cwd: sourcePath,
     allowFailure: true,
     env: { ...CLEARED_GIT_CONFIG_ENV },
@@ -89,35 +89,42 @@ async function readRawRemoteUrl(
   return result.stdout.trim() || null;
 }
 
-function classifyMarkedRemoteUrl(remoteUrl: string | null): MarkedRemoteKind {
+interface ClassifiedMarkedRemote {
+  kind: MarkedRemoteKind;
+  url: URL | null;
+}
+
+function classifyMarkedRemoteUrl(
+  remoteUrl: string | null,
+): ClassifiedMarkedRemote {
   if (remoteUrl === null) {
-    return "other";
+    return { kind: "other", url: null };
   }
   if (remoteUrl.includes("://")) {
     let url: URL;
     try {
       url = new URL(remoteUrl);
     } catch {
-      return "other";
+      return { kind: "other", url: null };
     }
     if (url.protocol === "ssh:") {
-      return "ssh";
+      return { kind: "ssh", url };
     }
     if (
       url.protocol === "https:" &&
       url.hostname.toLowerCase() === "github.com"
     ) {
-      return "https-github";
+      return { kind: "https-github", url };
     }
-    return "other";
+    return { kind: "other", url };
   }
   if (
     SCP_LIKE_REMOTE_PATTERN.test(remoteUrl) &&
     !WINDOWS_DRIVE_PATH_PATTERN.test(remoteUrl)
   ) {
-    return "ssh";
+    return { kind: "ssh", url: null };
   }
-  return "other";
+  return { kind: "other", url: null };
 }
 
 function ghProcessEnv(): NodeJS.ProcessEnv {
@@ -128,10 +135,21 @@ function ghProcessEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
+function createGhTokenCancelledError(cause?: unknown): WorkspaceError {
+  return new WorkspaceError(
+    "provision_cancelled",
+    "gh auth token was cancelled",
+    { cause },
+  );
+}
+
 async function resolveMarkedGhAccountToken(
   login: string,
   signal: AbortSignal | undefined,
 ): Promise<string> {
+  if (signal?.aborted) {
+    throw createGhTokenCancelledError(signal.reason);
+  }
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync(
@@ -145,6 +163,9 @@ async function resolveMarkedGhAccountToken(
       },
     ));
   } catch (error) {
+    if (signal?.aborted) {
+      throw createGhTokenCancelledError(error);
+    }
     const execError =
       error instanceof Error ? (error as ExecFileException) : undefined;
     const detail =
@@ -187,8 +208,8 @@ export async function resolveMarkedGhAccountFetch(args: {
   if (login === null) {
     return null;
   }
-  const kind = classifyMarkedRemoteUrl(
-    await readRawRemoteUrl(args.sourcePath, args.remote, args.signal),
+  const { kind, url } = classifyMarkedRemoteUrl(
+    await readRemoteFetchUrl(args.sourcePath, args.remote, args.signal),
   );
   if (kind === "other") {
     return null;
@@ -200,6 +221,12 @@ export async function resolveMarkedGhAccountFetch(args: {
       token: null,
       env: { ...CLEARED_GIT_CONFIG_ENV },
     };
+  }
+  if (url !== null && (url.username !== "" || url.password !== "")) {
+    throw new WorkspaceError(
+      "unsupported_gh_account_remote",
+      `${GH_ACCOUNT_MARKER_FILE_NAME} in ${args.sourcePath} cannot select an account for a remote URL that embeds credentials`,
+    );
   }
   const token = await resolveMarkedGhAccountToken(login, args.signal);
   return {

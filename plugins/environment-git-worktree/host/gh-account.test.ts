@@ -30,6 +30,7 @@ const FAKE_GH_SCRIPT = [
   "#!/bin/sh",
   'printf \'%s\\n\' "$*" >> "$GH_FAKE_LOG"',
   'if [ -n "$GH_FORCE_FAIL" ]; then echo "gh unavailable" >&2; exit 1; fi',
+  'if [ -n "$GH_DELAY" ]; then sleep "$GH_DELAY"; fi',
   'for v in "$GH_TOKEN" "$GITHUB_TOKEN" "$GH_ENTERPRISE_TOKEN" "$GITHUB_ENTERPRISE_TOKEN"; do',
   '  if [ -n "$v" ]; then echo "ambient token leaked to gh" >&2; exit 9; fi',
   "done",
@@ -193,6 +194,7 @@ function fixtureEnv(
     GIT_SSH_COMMAND: undefined,
     GIT_SSH_VARIANT: undefined,
     GH_FORCE_FAIL: undefined,
+    GH_DELAY: undefined,
     EXPECTED_FETCH_TOKEN: undefined,
   };
   for (let index = 0; index < 8; index += 1) {
@@ -245,12 +247,13 @@ async function withProcessEnv<T>(
 async function fetchMain(
   fixture: RemoteFixture,
   onProgress?: (entry: ProvisioningTranscriptEntry) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   await fetchRemoteBaseBranch({
     sourcePath: fixture.sourcePath,
     baseBranch: "origin/main",
     onProgress,
-    signal: undefined,
+    signal,
   });
 }
 
@@ -356,6 +359,189 @@ describe("gh-account marker fetch environment", () => {
     expect(
       await git(fixture.sourcePath, "rev-parse", "--verify", "origin/main"),
     ).toBeTruthy();
+  });
+
+  it("classifies the first configured remote URL like git fetch", async () => {
+    const fixture = await createRemoteFixture(
+      "git@github.com:octo/private.git",
+    );
+    await git(
+      fixture.sourcePath,
+      "config",
+      "--add",
+      "remote.origin.url",
+      "https://github.com/octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        EXPECTED_FETCH_TOKEN: "marked-account-token",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture),
+    );
+    expect(existsSync(fixture.sshLog)).toBe(true);
+    expect(existsSync(fixture.ghLog)).toBe(false);
+    expect(existsSync(fixture.httpsLog)).toBe(false);
+  });
+
+  it("classifies the first configured remote URL when it is HTTPS", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+    );
+    await git(
+      fixture.sourcePath,
+      "config",
+      "--add",
+      "remote.origin.url",
+      "git@github.com:octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        EXPECTED_FETCH_TOKEN: "marked-account-token",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture),
+    );
+    expect(await readFile(fixture.ghLog, "utf8")).toContain(
+      "auth token --user marked-user --hostname github.com",
+    );
+    expect(await readFile(fixture.httpsLog, "utf8")).toContain(
+      "git-config-count=2",
+    );
+    expect(existsSync(fixture.sshLog)).toBe(false);
+  });
+
+  it("follows the repository insteadOf rewrite from HTTPS to SSH", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+    );
+    await git(
+      fixture.sourcePath,
+      "config",
+      "url.git@github.com:.insteadOf",
+      "https://github.com/",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        EXPECTED_FETCH_TOKEN: "marked-account-token",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture),
+    );
+    expect(existsSync(fixture.sshLog)).toBe(true);
+    expect(existsSync(fixture.ghLog)).toBe(false);
+    expect(existsSync(fixture.httpsLog)).toBe(false);
+  });
+
+  it("follows the repository insteadOf rewrite from SSH to HTTPS", async () => {
+    const fixture = await createRemoteFixture(
+      "git@github.com:octo/private.git",
+    );
+    await git(
+      fixture.sourcePath,
+      "config",
+      "url.https://github.com/.insteadOf",
+      "git@github.com:",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        EXPECTED_FETCH_TOKEN: "marked-account-token",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture),
+    );
+    expect(await readFile(fixture.ghLog, "utf8")).toContain(
+      "auth token --user marked-user --hostname github.com",
+    );
+    expect(await readFile(fixture.httpsLog, "utf8")).toContain(
+      "git-config-count=2",
+    );
+    expect(existsSync(fixture.sshLog)).toBe(false);
+  });
+
+  it("fails closed for a marked GitHub remote URL with embedded credentials", async () => {
+    const fixture = await createRemoteFixture(
+      "https://deploy:embedded-secret-credential@github.com/octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    const transcript: ProvisioningTranscriptEntry[] = [];
+    let failure: unknown;
+    await withProcessEnv(
+      fixtureEnv(fixture, { EXPECTED_FETCH_TOKEN: "marked-account-token" }),
+      async () => {
+        try {
+          await fetchMain(fixture, (entry) => transcript.push(entry));
+        } catch (error) {
+          failure = error;
+        }
+      },
+    );
+    expect(failure).toMatchObject({
+      code: "unsupported_gh_account_remote",
+    });
+    expect(existsSync(fixture.ghLog)).toBe(false);
+    expect(existsSync(fixture.httpsLog)).toBe(false);
+    expect(existsSync(fixture.sshLog)).toBe(false);
+    const surfaces = [
+      failure instanceof Error ? failure.message : String(failure),
+      ...transcript.map((entry) => entry.text),
+    ].join("\n");
+    expect(surfaces).not.toContain("embedded-secret-credential");
+    expect(surfaces).not.toContain("deploy");
+    expect(surfaces).not.toContain("octo/private.git");
+  });
+
+  it("reports provision cancellation while gh auth token is running", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    const controller = new AbortController();
+    const pending = withProcessEnv(
+      fixtureEnv(fixture, { GH_DELAY: "30" }),
+      () => fetchMain(fixture, undefined, controller.signal),
+    );
+    const timer = setTimeout(() => controller.abort(), 100);
+    try {
+      await expect(pending).rejects.toMatchObject({
+        code: "provision_cancelled",
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const ghCalls = (await readFile(fixture.ghLog, "utf8"))
+      .trim()
+      .split("\n");
+    expect(ghCalls).toEqual([
+      "auth token --user marked-user --hostname github.com",
+    ]);
+    expect(existsSync(fixture.httpsLog)).toBe(false);
   });
 
   it.each([

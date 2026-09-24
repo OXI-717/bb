@@ -92,8 +92,9 @@ Making your repo work with bb:
   inherited GH_* tokens and fetches through a process-local credential helper
   that answers only HTTPS github.com; inherited GIT_CONFIG_* helpers are
   ignored for that fetch. SSH remotes fetch natively and never invoke gh. An
-  invalid marker, or an account the machine's gh cannot resolve, fails
-  provisioning before the worktree is created. Without the marker, fetches
+  invalid marker, an HTTPS github.com remote URL that embeds credentials, or
+  an account the machine's gh cannot resolve, fails provisioning before the
+  worktree is created. Without the marker, fetches
   keep the machine's ambient credentials.
 
   For files that customize agent instructions and skills (AGENTS.md,
