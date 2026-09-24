@@ -51,6 +51,29 @@ pnpm bb thread spawn \
 Omit `--base-branch` for bb's smart default. Explicit values are exact:
 `main` is local and `origin/main` is remote.
 
+## Fetch private remotes with `.gh-account`
+
+Remote base branches such as `origin/main` are fetched on the machine before
+the worktree is created. By default that fetch uses the machine's ambient Git
+credentials. Commit a `.gh-account` file at the root of your repo containing a
+single GitHub login to fetch as a specific account from that machine's `gh`
+login instead.
+
+Contract:
+
+- The marker must be a regular file (not a symlink) holding one bare GitHub
+  login, for example `octocat`.
+- bb resolves `gh auth token --user <login> --hostname github.com` on the
+  machine with ambient `GH_*` tokens removed, then fetches through a
+  process-local credential helper scoped to HTTPS github.com. Inherited
+  `GIT_CONFIG_*` credential helpers are ignored for that fetch only; no global
+  Git config or credential store is written, and the token never appears in
+  arguments, URLs, or logs.
+- An invalid marker or an account the machine's `gh` cannot resolve fails
+  provisioning before the worktree is created — bb does not fall back to a
+  different ambient account. Repositories without the marker keep the ambient
+  behavior, and SSH remotes always fetch natively.
+
 ## Copy local files with `.worktreeinclude`
 
 A new worktree checks out tracked files only. Your `.env`, your local

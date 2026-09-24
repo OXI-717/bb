@@ -31,6 +31,10 @@ import {
   type ProgressCallback,
 } from "bb-environment-provider-host/transcript";
 import {
+  GH_ACCOUNT_MARKER_FILE_NAME,
+  resolveMarkedGhAccountFetch,
+} from "./gh-account.js";
+import {
   copyWorktreeIncludeFiles,
   WORKTREE_INCLUDE_FILE_NAME,
   type CopyWorktreeIncludeFilesResult,
@@ -282,6 +286,22 @@ export async function fetchRemoteBaseBranch(args: {
   try {
     throwIfProvisionAborted(args.signal);
     const commonDir = await getGitCommonDir(args.sourcePath, gitProcessOptions);
+    const markedFetch = await resolveMarkedGhAccountFetch({
+      sourcePath: args.sourcePath,
+      signal: args.signal,
+    });
+    if (markedFetch) {
+      emitOutput(
+        args.onProgress,
+        "git-fetch-account",
+        `Fetching as GitHub account "${markedFetch.login}" declared by ${GH_ACCOUNT_MARKER_FILE_NAME}`,
+      );
+    }
+    const fetchEnv: NodeJS.ProcessEnv = {
+      GIT_TERMINAL_PROMPT: "0",
+      LC_ALL: "C",
+      ...markedFetch?.env,
+    };
     const fetchBaseBranch = async (): Promise<void> => {
       try {
         await withGitRefMutationLock(
@@ -290,7 +310,7 @@ export async function fetchRemoteBaseBranch(args: {
             runGit(["fetch", "--quiet", remoteBase.remote, refspec], {
               cwd: args.sourcePath,
               ...gitProcessOptions,
-              env: { GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+              env: fetchEnv,
               timeoutMs: REMOTE_BASE_FETCH_TIMEOUT_MS,
             }),
           args.signal !== undefined ? { signal: args.signal } : {},

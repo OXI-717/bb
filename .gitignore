@@ -38,6 +38,7 @@ out
 # misc
 .DS_Store
 *.pem
+.worktrees/
 
 # temporary scripts
 .tmp/
