@@ -32,6 +32,7 @@ import {
 } from "bb-environment-provider-host/transcript";
 import {
   GH_ACCOUNT_MARKER_FILE_NAME,
+  redactMarkedFetchError,
   resolveMarkedGhAccountFetch,
 } from "./gh-account.js";
 import {
@@ -288,13 +289,16 @@ export async function fetchRemoteBaseBranch(args: {
     const commonDir = await getGitCommonDir(args.sourcePath, gitProcessOptions);
     const markedFetch = await resolveMarkedGhAccountFetch({
       sourcePath: args.sourcePath,
+      remote: remoteBase.remote,
       signal: args.signal,
     });
     if (markedFetch) {
       emitOutput(
         args.onProgress,
         "git-fetch-account",
-        `Fetching as GitHub account "${markedFetch.login}" declared by ${GH_ACCOUNT_MARKER_FILE_NAME}`,
+        markedFetch.transport === "https-github"
+          ? `Fetching as GitHub account "${markedFetch.login}" declared by ${GH_ACCOUNT_MARKER_FILE_NAME}`
+          : `Fetching the SSH remote natively for the ${GH_ACCOUNT_MARKER_FILE_NAME}-marked repository`,
       );
     }
     const fetchEnv: NodeJS.ProcessEnv = {
@@ -316,6 +320,7 @@ export async function fetchRemoteBaseBranch(args: {
           args.signal !== undefined ? { signal: args.signal } : {},
         );
       } catch (error) {
+        redactMarkedFetchError(error, markedFetch?.token ?? null);
         if (args.signal?.aborted && !isProvisionAbortError(error)) {
           throw createProvisionCancelledError(error);
         }

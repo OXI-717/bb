@@ -63,16 +63,17 @@ Contract:
 
 - The marker must be a regular file (not a symlink) holding one bare GitHub
   login, for example `octocat`.
-- bb resolves `gh auth token --user <login> --hostname github.com` on the
-  machine with ambient `GH_*` tokens removed, then fetches through a
-  process-local credential helper scoped to HTTPS github.com. Inherited
-  `GIT_CONFIG_*` credential helpers are ignored for that fetch only; no global
-  Git config or credential store is written, and the token never appears in
-  arguments, URLs, or logs.
+- For an HTTPS github.com remote, bb resolves `gh auth token --user <login>
+  --hostname github.com` on the machine with ambient `GH_*` tokens removed,
+  then fetches through a process-local credential helper that resolves the
+  same account and answers only HTTPS github.com credential requests.
+  Inherited `GIT_CONFIG_*` entries are ignored for that fetch only; no global
+  Git config or credential store is written, and the token never enters the
+  fetch environment, arguments, URLs, or logs.
 - An invalid marker or an account the machine's `gh` cannot resolve fails
   provisioning before the worktree is created — bb does not fall back to a
   different ambient account. Repositories without the marker keep the ambient
-  behavior, and SSH remotes always fetch natively.
+  behavior, and SSH remotes always fetch natively without invoking `gh`.
 
 ## Copy local files with `.worktreeinclude`
 

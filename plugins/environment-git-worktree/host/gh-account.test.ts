@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { WorkspaceError } from "bb-environment-provider-host/git";
+import type { ProvisioningTranscriptEntry } from "bb-environment-provider-host/transcript";
 import { afterEach, describe, expect, it } from "vitest";
 import { GH_ACCOUNT_MARKER_FILE_NAME } from "./gh-account.js";
 import { createWorktree, fetchRemoteBaseBranch } from "./worktree.js";
@@ -24,6 +26,7 @@ const AMBIENT_CREDENTIAL_HELPER =
 const FAKE_GH_SCRIPT = [
   "#!/bin/sh",
   'printf \'%s\\n\' "$*" >> "$GH_FAKE_LOG"',
+  'if [ -n "$GH_FORCE_FAIL" ]; then echo "gh unavailable" >&2; exit 1; fi',
   'for v in "$GH_TOKEN" "$GITHUB_TOKEN" "$GH_ENTERPRISE_TOKEN" "$GITHUB_ENTERPRISE_TOKEN"; do',
   '  if [ -n "$v" ]; then echo "ambient token leaked to gh" >&2; exit 9; fi',
   "done",
@@ -60,9 +63,27 @@ const FAKE_HTTPS_HELPER_SCRIPT = [
   "done",
 ].join("\n");
 
-const FAKE_SSH_SCRIPT = ["#!/bin/sh", 'exec git upload-pack "$FAKE_BARE"'].join(
-  "\n",
-);
+const LEAKY_HTTPS_HELPER_SCRIPT = [
+  "#!/bin/sh",
+  "while IFS= read -r line; do",
+  '  case "$line" in',
+  "    capabilities)",
+  "      printf 'connect\\n\\n'",
+  "      ;;",
+  "    connect*)",
+  '      tok=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --user marked-user --hostname github.com)',
+  '      echo "fatal: remote rejected credential $tok" >&2',
+  "      exit 1",
+  "      ;;",
+  "  esac",
+  "done",
+].join("\n");
+
+const FAKE_SSH_SCRIPT = [
+  "#!/bin/sh",
+  'echo invoked >> "$SSH_LOG"',
+  'exec git upload-pack "$FAKE_BARE"',
+].join("\n");
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync("git", args, {
@@ -87,9 +108,13 @@ interface RemoteFixture {
   globalConfig: string;
   ghLog: string;
   httpsLog: string;
+  sshLog: string;
 }
 
-async function createRemoteFixture(remoteUrl: string): Promise<RemoteFixture> {
+async function createRemoteFixture(
+  remoteUrl: string,
+  options: { httpsHelper?: "standard" | "leaky" } = {},
+): Promise<RemoteFixture> {
   const root = await mkdtemp(join(tmpdir(), "bb-gh-account-"));
   temporaryRoots.push(root);
   const seedPath = join(root, "seed");
@@ -114,9 +139,13 @@ async function createRemoteFixture(remoteUrl: string): Promise<RemoteFixture> {
   await git(sourcePath, "remote", "add", "origin", remoteUrl);
   await writeFile(join(binDir, "gh"), FAKE_GH_SCRIPT, { mode: 0o755 });
   await writeFile(join(binDir, "ssh"), FAKE_SSH_SCRIPT, { mode: 0o755 });
-  await writeFile(join(execDir, "git-remote-https"), FAKE_HTTPS_HELPER_SCRIPT, {
-    mode: 0o755,
-  });
+  await writeFile(
+    join(execDir, "git-remote-https"),
+    options.httpsHelper === "leaky"
+      ? LEAKY_HTTPS_HELPER_SCRIPT
+      : FAKE_HTTPS_HELPER_SCRIPT,
+    { mode: 0o755 },
+  );
   return {
     root,
     sourcePath,
@@ -126,6 +155,7 @@ async function createRemoteFixture(remoteUrl: string): Promise<RemoteFixture> {
     globalConfig,
     ghLog: join(root, "gh.log"),
     httpsLog: join(root, "https.log"),
+    sshLog: join(root, "ssh.log"),
   };
 }
 
@@ -159,6 +189,8 @@ function fixtureEnv(
     GIT_CONFIG_COUNT: undefined,
     GIT_SSH_COMMAND: undefined,
     GIT_SSH_VARIANT: undefined,
+    GH_FORCE_FAIL: undefined,
+    EXPECTED_FETCH_TOKEN: undefined,
   };
   for (let index = 0; index < 8; index += 1) {
     cleared[`GIT_CONFIG_KEY_${index}`] = undefined;
@@ -173,6 +205,7 @@ function fixtureEnv(
     PATH: `${fixture.binDir}:${process.env.PATH}`,
     GH_FAKE_LOG: fixture.ghLog,
     HTTPS_HELPER_LOG: fixture.httpsLog,
+    SSH_LOG: fixture.sshLog,
     FAKE_BARE: fixture.barePath,
     ...extra,
   };
@@ -206,11 +239,14 @@ async function withProcessEnv<T>(
   }
 }
 
-async function fetchMain(fixture: RemoteFixture): Promise<void> {
+async function fetchMain(
+  fixture: RemoteFixture,
+  onProgress?: (entry: ProvisioningTranscriptEntry) => void,
+): Promise<void> {
   await fetchRemoteBaseBranch({
     sourcePath: fixture.sourcePath,
     baseBranch: "origin/main",
-    onProgress: undefined,
+    onProgress,
     signal: undefined,
   });
 }
@@ -261,7 +297,7 @@ describe("gh-account marker fetch environment", () => {
     );
   });
 
-  it("keeps SSH remotes native for a marked repository", async () => {
+  it("keeps a marked SSH remote native without resolving a gh token", async () => {
     const fixture = await createRemoteFixture(
       "ssh://git@github.com/octo/private.git",
     );
@@ -269,18 +305,77 @@ describe("gh-account marker fetch environment", () => {
       join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
       "marked-user\n",
     );
+    const transcript: ProvisioningTranscriptEntry[] = [];
     await withProcessEnv(
       fixtureEnv(fixture, {
-        EXPECTED_FETCH_TOKEN: "ambient-wrong-token",
+        GH_FORCE_FAIL: "1",
+        GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
+        GIT_SSH_VARIANT: "simple",
+      }),
+      () => fetchMain(fixture, (entry) => transcript.push(entry)),
+    );
+    expect(existsSync(fixture.sshLog)).toBe(true);
+    expect(existsSync(fixture.ghLog)).toBe(false);
+    expect(existsSync(fixture.httpsLog)).toBe(false);
+    expect(transcript.map((entry) => entry.text).join("\n")).toContain(
+      "SSH remote natively",
+    );
+  });
+
+  it("fetches a marked SCP-style remote over native SSH as well", async () => {
+    const fixture = await createRemoteFixture(
+      "git@github.com:octo/private.git",
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    await withProcessEnv(
+      fixtureEnv(fixture, {
+        GH_FORCE_FAIL: "1",
         GIT_SSH_COMMAND: join(fixture.binDir, "ssh"),
         GIT_SSH_VARIANT: "simple",
       }),
       () => fetchMain(fixture),
     );
-    expect(await readFile(fixture.ghLog, "utf8")).toContain(
-      "auth token --user marked-user --hostname github.com",
-    );
+    expect(existsSync(fixture.sshLog)).toBe(true);
+    expect(existsSync(fixture.ghLog)).toBe(false);
     expect(existsSync(fixture.httpsLog)).toBe(false);
+  });
+
+  it("redacts the resolved token from fetch failure errors and transcript", async () => {
+    const fixture = await createRemoteFixture(
+      "https://github.com/octo/private.git",
+      { httpsHelper: "leaky" },
+    );
+    await writeFile(
+      join(fixture.sourcePath, GH_ACCOUNT_MARKER_FILE_NAME),
+      "marked-user\n",
+    );
+    const transcript: ProvisioningTranscriptEntry[] = [];
+    let failure: unknown;
+    await withProcessEnv(fixtureEnv(fixture), async () => {
+      try {
+        await fetchMain(fixture, (entry) => transcript.push(entry));
+      } catch (error) {
+        failure = error;
+      }
+    });
+    expect(failure).toBeInstanceOf(WorkspaceError);
+    const workspaceError = failure as WorkspaceError;
+    expect(workspaceError.code).toBe("git_command_failed");
+    expect(workspaceError.message).not.toContain("marked-account-token");
+    expect(workspaceError.message).toContain("<redacted>");
+    let serialized = "";
+    for (let current: unknown = workspaceError; ; ) {
+      serialized += `${current instanceof Error ? current.message : String(current)}\n`;
+      if (!(current instanceof Error) || current.cause === undefined) break;
+      current = current.cause;
+    }
+    expect(serialized).not.toContain("marked-account-token");
+    expect(
+      transcript.map((entry) => entry.text).join("\n"),
+    ).not.toContain("marked-account-token");
   });
 
   it("rejects a marker that is not a regular file before creating a worktree", async () => {

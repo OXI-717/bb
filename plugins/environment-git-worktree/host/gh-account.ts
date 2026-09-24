@@ -3,7 +3,10 @@ import { execFile, type ExecFileException } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { WorkspaceError } from "bb-environment-provider-host/git";
+import {
+  runGit,
+  WorkspaceError,
+} from "bb-environment-provider-host/git";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,8 +24,11 @@ const AMBIENT_GH_TOKEN_NAMES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
-const githubCredentialHelper =
-  '!f() { test "$1" = get || exit 0; protocol=; host=; while IFS= read -r line && test -n "$line"; do case "$line" in protocol=*) protocol=${line#protocol=} ;; host=*) host=${line#host=} ;; esac; done; if test "$protocol" = https && test "$host" = github.com && test -n "$GH_TOKEN"; then printf "username=x-access-token\\npassword=%s\\n" "$GH_TOKEN"; fi; }; f';
+const SCP_LIKE_REMOTE_PATTERN = /^[^\s/]+:[^\s]+$/u;
+const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:[\\/]/u;
+const GIT_FETCH_SECRET_PLACEHOLDER = "<redacted>";
+
+type MarkedRemoteKind = "https-github" | "ssh" | "other";
 
 function isMissingFileError(error: unknown): boolean {
   return (
@@ -59,6 +65,53 @@ async function readMarkedGhAccountLogin(
     );
   }
   return login;
+}
+
+async function readRawRemoteUrl(
+  sourcePath: string,
+  remote: string,
+  signal: AbortSignal | undefined,
+): Promise<string | null> {
+  const result = await runGit(["config", "--get", `remote.${remote}.url`], {
+    cwd: sourcePath,
+    allowFailure: true,
+    ...(signal !== undefined ? { signal } : {}),
+  });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return result.stdout.trim() || null;
+}
+
+function classifyMarkedRemoteUrl(remoteUrl: string | null): MarkedRemoteKind {
+  if (remoteUrl === null) {
+    return "other";
+  }
+  if (remoteUrl.includes("://")) {
+    let url: URL;
+    try {
+      url = new URL(remoteUrl);
+    } catch {
+      return "other";
+    }
+    if (url.protocol === "ssh:") {
+      return "ssh";
+    }
+    if (
+      url.protocol === "https:" &&
+      url.hostname.toLowerCase() === "github.com"
+    ) {
+      return "https-github";
+    }
+    return "other";
+  }
+  if (
+    SCP_LIKE_REMOTE_PATTERN.test(remoteUrl) &&
+    !WINDOWS_DRIVE_PATH_PATTERN.test(remoteUrl)
+  ) {
+    return "ssh";
+  }
+  return "other";
 }
 
 function ghProcessEnv(): NodeJS.ProcessEnv {
@@ -108,30 +161,76 @@ async function resolveMarkedGhAccountToken(
   return token;
 }
 
+function ghAccountCredentialHelper(login: string): string {
+  return `!f() { test "$1" = get || exit 0; protocol=; host=; while IFS= read -r line && test -n "$line"; do case "$line" in protocol=*) protocol=\${line#protocol=} ;; host=*) host=\${line#host=} ;; esac; done; if test "$protocol" = https && test "$host" = github.com; then token=$(unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth token --user ${login} --hostname github.com 2>/dev/null) || exit 0; test -n "$token" && printf "username=x-access-token\\npassword=%s\\n" "$token"; fi; }; f`;
+}
+
 export interface MarkedGhAccountFetch {
   login: string;
+  transport: Exclude<MarkedRemoteKind, "other">;
+  token: string | null;
   env: NodeJS.ProcessEnv;
 }
 
 export async function resolveMarkedGhAccountFetch(args: {
   sourcePath: string;
+  remote: string;
   signal?: AbortSignal | undefined;
 }): Promise<MarkedGhAccountFetch | null> {
   const login = await readMarkedGhAccountLogin(args.sourcePath);
   if (login === null) {
     return null;
   }
+  const kind = classifyMarkedRemoteUrl(
+    await readRawRemoteUrl(args.sourcePath, args.remote, args.signal),
+  );
+  if (kind === "other") {
+    return null;
+  }
+  if (kind === "ssh") {
+    return {
+      login,
+      transport: "ssh",
+      token: null,
+      env: {
+        GIT_CONFIG_PARAMETERS: "",
+        GIT_CONFIG_COUNT: "0",
+      },
+    };
+  }
   const token = await resolveMarkedGhAccountToken(login, args.signal);
   return {
     login,
+    transport: "https-github",
+    token,
     env: {
-      GH_TOKEN: token,
       GIT_CONFIG_PARAMETERS: "",
       GIT_CONFIG_COUNT: "2",
       GIT_CONFIG_KEY_0: "credential.helper",
       GIT_CONFIG_VALUE_0: "",
       GIT_CONFIG_KEY_1: "credential.helper",
-      GIT_CONFIG_VALUE_1: githubCredentialHelper,
+      GIT_CONFIG_VALUE_1: ghAccountCredentialHelper(login),
     },
   };
+}
+
+export function redactMarkedFetchError(
+  error: unknown,
+  token: string | null,
+): void {
+  if (!token || !(error instanceof Error)) {
+    return;
+  }
+  const scrub = (text: string): string =>
+    text.split(token).join(GIT_FETCH_SECRET_PLACEHOLDER);
+  try {
+    error.message = scrub(error.message);
+  } catch {}
+  const withStderr = error as Error & { stderr?: unknown };
+  if (typeof withStderr.stderr === "string") {
+    try {
+      withStderr.stderr = scrub(withStderr.stderr);
+    } catch {}
+  }
+  redactMarkedFetchError(error.cause, token);
 }
