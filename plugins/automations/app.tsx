@@ -1,3 +1,4 @@
+import { parseCreatePresets } from "./src/create-presets.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { buildAutomationEditThreadPrompt } from "@bb/shared-ui/resource-edit-prompt";
@@ -5,6 +6,7 @@ import {
   definePluginApp,
   useBbNavigate,
   useRealtime,
+  useSettings,
   useRpc,
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
@@ -392,6 +394,11 @@ function OverviewView({
 }) {
   const navigate = useBbNavigate();
   const { entries, error, refetch } = useOverview();
+  const { values } = useSettings();
+  const creationPresets = useMemo(
+    () => parseCreatePresets(values?.creationPresets),
+    [values?.creationPresets],
+  );
   const mutations = useMutations();
 
   const changeEnabled = useCallback(
@@ -424,6 +431,7 @@ function OverviewView({
       onOpenDetail={onOpenDetail}
       onEnabledChange={changeEnabled}
       onCreateViaChat={createViaChat}
+      creationPresets={creationPresets}
       activeMode={activeMode}
       onModeChange={onModeChange}
     />

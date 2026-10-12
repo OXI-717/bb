@@ -190,7 +190,14 @@ describe("automations server plugin harness", () => {
       "thread.failed": 1,
       "thread.deleted": 1,
     });
-    expect(harness.registrations.settingsDescriptors).toEqual({});
+    expect(harness.registrations.settingsDescriptors).toMatchObject({
+      creationPresets: {
+        type: "string",
+        label: "Additional creation menu items",
+        default: "[]",
+        experimental_multiline: true,
+      },
+    });
 
     await harness.dispose();
   });

@@ -413,6 +413,7 @@ export function AutomationOverviewView({
   onOpenDetail,
   onEnabledChange,
   onCreateViaChat,
+  creationPresets = [],
   activeMode,
   onModeChange,
 }: {
@@ -428,6 +429,11 @@ export function AutomationOverviewView({
     route: AutomationDetailRoute,
   ) => Promise<void>;
   onCreateViaChat: (prompt?: string) => void;
+  creationPresets?: readonly {
+    label: string;
+    description: string;
+    prompt: string;
+  }[];
   activeMode: AutomationCollectionMode;
   onModeChange: (mode: AutomationCollectionMode) => void;
 }) {
@@ -624,6 +630,14 @@ export function AutomationOverviewView({
         <ResourceCreateButton
           label="New automation"
           templates={AUTOMATION_CREATE_TEMPLATES}
+          templateGroups={
+            creationPresets.length > 0
+              ? [
+                  { label: "Custom", templates: creationPresets },
+                  { label: "Examples", templates: AUTOMATION_CREATE_TEMPLATES },
+                ]
+              : undefined
+          }
           onCreate={onCreateViaChat}
         />
       }
