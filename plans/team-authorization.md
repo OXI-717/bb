@@ -138,3 +138,27 @@ execution credentials exposed. A plugin-only check cannot cover direct file and
 terminal operations. Separate BB instances provide a clearer process boundary,
 but conflict with the required shared BB. The core guard plus credential broker
 and isolated execution preserves that requirement.
+
+## Prototype status and execution evidence
+
+The initial prototype is `apps/server/src/services/team-token-verifier.ts`, with
+adversarial cases in `apps/server/test/security/team-token-verifier.test.ts`.
+It verifies ES384/RS256 resource tokens, bounds JWKS retrieval, rejects redirects,
+requires registered claims, limits cache lifetime and refresh frequency, and
+returns an immutable principal without copying arbitrary profile metadata.
+It is deliberately not connected to server routes: token validation alone does
+not provide the authorization and process isolation specified above.
+
+On 2026-11-01 both `oxi-lw` and `leaseweb-lab` failed the official remote runner
+doctor at the SSH check (exit 255). The `ws-ilya` doctor passed with load 0.01,
+four CPUs and approximately 13 GB available memory. A remote preparation attempt
+was rejected before upload/execution with `push_blocked_secret_pattern` (exit 70):
+the existing source contains `plugins/account-pool/src/fixtures/localhost-key.pem`.
+No key content was printed or transferred. No test command started. Do not weaken
+the transfer policy or delete the fixture to make the upload pass.
+
+Syntax parsing with Node and `git diff --check` passed on the controller; neither
+is a test result, a TypeScript typecheck, or proof of deployed authorization.
+The prototype remains unverified and is not suitable for deployment. Continue
+with an accepted complete-source test path on a test machine, then transport
+integration and the rest of the delivery sequence. No production access changed.
