@@ -1,4 +1,9 @@
-import { createPublicKey, verify, type JsonWebKey, type KeyObject } from "node:crypto";
+import {
+  createPublicKey,
+  verify,
+  type JsonWebKey,
+  type KeyObject,
+} from "node:crypto";
 
 type SigningAlgorithm = "ES384" | "RS256";
 
@@ -29,13 +34,14 @@ function object(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TeamTokenVerificationError();
   }
-  return value;
+  return value as Record<string, unknown>;
 }
 
 function decode(value: string): Buffer {
   if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new TeamTokenVerificationError();
   const result = Buffer.from(value, "base64url");
-  if (result.toString("base64url") !== value) throw new TeamTokenVerificationError();
+  if (result.toString("base64url") !== value)
+    throw new TeamTokenVerificationError();
   return result;
 }
 
@@ -51,12 +57,17 @@ function trustedUrl(value: string): URL {
   return url;
 }
 
-function signingKey(value: Record<string, unknown>, algorithm: SigningAlgorithm): KeyObject {
+function signingKey(
+  value: Record<string, unknown>,
+  algorithm: SigningAlgorithm,
+): KeyObject {
   if ("d" in value || (value.use !== undefined && value.use !== "sig")) {
     throw new TeamTokenVerificationError();
   }
-  if (value.key_ops !== undefined &&
-    (!Array.isArray(value.key_ops) || !value.key_ops.includes("verify"))) {
+  if (
+    value.key_ops !== undefined &&
+    (!Array.isArray(value.key_ops) || !value.key_ops.includes("verify"))
+  ) {
     throw new TeamTokenVerificationError();
   }
   if (value.alg !== undefined && value.alg !== algorithm) {
@@ -68,11 +79,16 @@ function signingKey(value: Record<string, unknown>, algorithm: SigningAlgorithm)
   }
   const key = createPublicKey({ key: jwk, format: "jwk" });
   if (algorithm === "ES384") {
-    if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "secp384r1") {
+    if (
+      key.asymmetricKeyType !== "ec" ||
+      key.asymmetricKeyDetails?.namedCurve !== "secp384r1"
+    ) {
       throw new TeamTokenVerificationError();
     }
-  } else if (key.asymmetricKeyType !== "rsa" ||
-    (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) {
+  } else if (
+    key.asymmetricKeyType !== "rsa" ||
+    (key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048
+  ) {
     throw new TeamTokenVerificationError();
   }
   return key;
@@ -81,9 +97,16 @@ function signingKey(value: Record<string, unknown>, algorithm: SigningAlgorithm)
 export function createTeamTokenVerifier(options: TeamTokenVerifierOptions) {
   trustedUrl(options.issuer);
   const jwksUrl = trustedUrl(options.jwksUrl);
-  if (!options.audience || options.algorithms.length === 0 ||
-    options.algorithms.some((algorithm) => algorithm !== "ES384" && algorithm !== "RS256")) {
-    throw new Error("Team token verification requires an audience and allowed signing algorithms");
+  if (
+    !options.audience ||
+    options.algorithms.length === 0 ||
+    options.algorithms.some(
+      (algorithm) => algorithm !== "ES384" && algorithm !== "RS256",
+    )
+  ) {
+    throw new Error(
+      "Team token verification requires an audience and allowed signing algorithms",
+    );
   }
   const issuer = options.issuer;
   const audience = options.audience;
@@ -138,21 +161,40 @@ export function createTeamTokenVerifier(options: TeamTokenVerifierOptions) {
   }
 
   return {
-    async verify(authorization: string | undefined): Promise<VerifiedTeamPrincipal> {
+    async verify(
+      authorization: string | undefined,
+    ): Promise<VerifiedTeamPrincipal> {
       try {
-        if (!authorization?.startsWith("Bearer ") || authorization.length > 16_384) {
+        if (
+          !authorization?.startsWith("Bearer ") ||
+          authorization.length > 16_384
+        ) {
           throw new TeamTokenVerificationError();
         }
         const parts = authorization.slice(7).split(".");
         if (parts.length !== 3) throw new TeamTokenVerificationError();
         const [encodedHeader, encodedPayload, encodedSignature] = parts;
-        if (!encodedHeader || !encodedPayload || !encodedSignature || encodedHeader.length > 4_096) {
+        if (
+          !encodedHeader ||
+          !encodedPayload ||
+          !encodedSignature ||
+          encodedHeader.length > 4_096
+        ) {
           throw new TeamTokenVerificationError();
         }
         const header = json(encodedHeader);
-        if ((header.alg !== "ES384" && header.alg !== "RS256") || !algorithms.has(header.alg) ||
-          typeof header.kid !== "string" || header.kid.length === 0 || header.kid.length > 256 ||
-          "crit" in header || "jku" in header || "jwk" in header || "x5u" in header || "b64" in header) {
+        if (
+          (header.alg !== "ES384" && header.alg !== "RS256") ||
+          !algorithms.has(header.alg) ||
+          typeof header.kid !== "string" ||
+          header.kid.length === 0 ||
+          header.kid.length > 256 ||
+          "crit" in header ||
+          "jku" in header ||
+          "jwk" in header ||
+          "x5u" in header ||
+          "b64" in header
+        ) {
           throw new TeamTokenVerificationError();
         }
         const algorithm = header.alg;
@@ -176,21 +218,35 @@ export function createTeamTokenVerifier(options: TeamTokenVerifierOptions) {
         const claims = json(encodedPayload);
         const seconds = Math.floor(clock() / 1_000);
         const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-        if (claims.iss !== issuer || !audiences.every((value) => typeof value === "string") ||
-          !audiences.includes(audience) || typeof claims.sub !== "string" ||
-          claims.sub.trim().length === 0 || claims.sub.length > 256 ||
-          typeof claims.exp !== "number" || !Number.isSafeInteger(claims.exp) || claims.exp <= seconds ||
-          typeof claims.iat !== "number" || !Number.isSafeInteger(claims.iat) || claims.iat > seconds ||
-          claims.exp <= claims.iat || claims.exp - claims.iat > 3_600 ||
-          (claims.nbf !== undefined && (typeof claims.nbf !== "number" ||
-            !Number.isSafeInteger(claims.nbf) || claims.nbf > seconds)) ||
-          typeof claims.scope !== "string") {
+        if (
+          claims.iss !== issuer ||
+          !audiences.every((value) => typeof value === "string") ||
+          !audiences.includes(audience) ||
+          typeof claims.sub !== "string" ||
+          claims.sub.trim().length === 0 ||
+          claims.sub.length > 256 ||
+          typeof claims.exp !== "number" ||
+          !Number.isSafeInteger(claims.exp) ||
+          claims.exp <= seconds ||
+          typeof claims.iat !== "number" ||
+          !Number.isSafeInteger(claims.iat) ||
+          claims.iat > seconds ||
+          claims.exp <= claims.iat ||
+          claims.exp - claims.iat > 3_600 ||
+          (claims.nbf !== undefined &&
+            (typeof claims.nbf !== "number" ||
+              !Number.isSafeInteger(claims.nbf) ||
+              claims.nbf > seconds)) ||
+          typeof claims.scope !== "string"
+        ) {
           throw new TeamTokenVerificationError();
         }
         return Object.freeze({
           issuer,
           subject: claims.sub,
-          scopes: Object.freeze([...new Set(claims.scope.split(" ").filter(Boolean))]),
+          scopes: Object.freeze([
+            ...new Set(claims.scope.split(" ").filter(Boolean)),
+          ]),
           expiresAt: claims.exp,
         });
       } catch {
