@@ -1,6 +1,6 @@
 # Team authorization in one shared BB
 
-Status: implementation proposal, 2026-11-01. No authorization boundary is shipped by this document.
+Status: unverified prototype and implementation proposal, 2026-11-01. No authorization boundary is shipped by this change.
 
 ## Problem and acceptance
 
@@ -149,8 +149,18 @@ returns an immutable principal without copying arbitrary profile metadata.
 It is deliberately not connected to server routes: token validation alone does
 not provide the authorization and process isolation specified above.
 
-On 2026-11-01 both `oxi-lw` and `leaseweb-lab` failed the official remote runner
-doctor at the SSH check (exit 255). The `ws-ilya` doctor passed with load 0.01,
+On 2026-11-01 both `oxi-lw` and `leaseweb-lab` initially failed the official remote
+runner doctor at the SSH check (exit 255). Investigation identified host-key
+verification, rather than network reachability, as the cause. The LW public host
+key was independently read over its enrolled BB connection, matched against the
+SSH endpoint, and appended to the controller's known-hosts file. Strict host-key
+verification remains enabled; the mismatched Leaseweb lab key was not replaced.
+The subsequent LW doctor reached the server and passed its isolation, integrity,
+disk, memory and load checks, but returned `not_prepared` for cache manifests whose
+controller source paths were missing. It reported approximately 89 GB free disk,
+50 GB available memory, sixteen CPUs and load 2.97.
+
+The `ws-ilya` doctor passed with load 0.01,
 four CPUs and approximately 13 GB available memory. A remote preparation attempt
 was rejected before upload/execution with `push_blocked_secret_pattern` (exit 70):
 the existing source contains `plugins/account-pool/src/fixtures/localhost-key.pem`.
