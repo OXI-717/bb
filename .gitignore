@@ -99,3 +99,5 @@ provider-recordings/raw/
 /plugins/*/.bundled-runtime/
 
 .ci-health/
+.worktrees/
+/oxi-test-results/

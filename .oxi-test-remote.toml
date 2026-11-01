@@ -1,0 +1,3 @@
+command = "pnpm exec turbo run test --filter=@bb/server -- test/public/public-authorization-regressions.test.ts --maxWorkers=2"
+cwd = "."
+results = "oxi-test-results"
