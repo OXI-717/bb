@@ -1,6 +1,6 @@
 # Team authorization in one shared BB
 
-Status: verified token-validation prototype and implementation proposal, 2026-11-01. No authorization boundary is shipped by this change.
+Status: partially verified implementation draft, 2026-11-01. No production authorization boundary has been enabled.
 
 ## Problem and acceptance
 
@@ -141,64 +141,67 @@ and isolated execution preserves that requirement.
 
 ## Prototype status and execution evidence
 
-The initial prototype is `apps/server/src/services/team-token-verifier.ts`, with
-adversarial cases in `apps/server/test/security/team-token-verifier.test.ts`.
-It verifies ES384/RS256 resource tokens, bounds JWKS retrieval, rejects redirects,
-requires registered claims, limits cache lifetime and refresh frequency, and
-returns an immutable principal without copying arbitrary profile metadata.
-It is deliberately not connected to server routes: token validation alone does
-not provide the authorization and process isolation specified above.
+The cryptographic verifier checks ES384/RS256 resource tokens with bounded JWKS
+retrieval and cache lifetime. The HTTP guard verifies a client before routing,
+denies rejected or unavailable policy, and places an immutable verified principal
+in request context. Client plugin RPC handlers receive that principal through
+`experimental_caller.experimental_principal`; profiles and forwarded names cannot
+populate it. Internal daemon transport retains its existing authentication.
+Client upgrades are denied pending connection-level revocation support.
 
-On 2026-11-01 both `oxi-lw` and `leaseweb-lab` initially failed the official remote
-runner doctor at the SSH check (exit 255). Investigation identified host-key
-verification, rather than network reachability, as the cause. The LW public host
-key was independently read over its enrolled BB connection, matched against the
-SSH endpoint, and appended to the controller's known-hosts file. Strict host-key
-verification remains enabled; the mismatched Leaseweb lab key was not replaced.
-The subsequent LW doctor reached the server and passed its isolation, integrity,
-disk, memory and load checks, but returned `not_prepared` for cache manifests whose
-controller source paths were missing. It reported approximately 89 GB free disk,
-50 GB available memory, sixteen CPUs and load 2.97.
+The latest draft adds an operator-owned RPC policy and the experimental startup
+option `BB_TEAM_RPC_POLICY_FILE`. This permits only exact bound POST RPC methods,
+with explicit subject and scope checks. Other client routes remain denied. It is
+restricted RPC ingress, not general multi-user BB or provider-account isolation.
+The new policy loader and startup configuration are pending remote verification.
 
-The `ws-ilya` doctor passed with load 0.01,
-four CPUs and approximately 13 GB available memory. A remote preparation attempt
-was rejected before upload/execution with `push_blocked_secret_pattern` (exit 70):
-the existing source contains `plugins/account-pool/src/fixtures/localhost-key.pem`.
-No key content was printed or transferred. No test command started. Do not weaken
-the transfer policy or delete the fixture to make the upload pass.
+### Completed Linux verification
 
-Syntax parsing with Node and `git diff --check` passed on the controller; neither
-is a test result, a TypeScript typecheck, or proof of deployed authorization.
-These were the initial blockers; the following execution resolved them for the
-prototype. No production access changed.
+Complete source was cloned/fetched directly from the public fork on the test host.
+No controller source bundle or key-transfer exception was used; existing key
+fixtures were unchanged. Tests ran in the existing root-owned sandbox with network
+isolation, two-CPU affinity, two Turbo tasks and two Vitest workers. Compiler paths
+were explicit because the sandbox does not expose distribution alternatives.
 
-### Successful ws-ilya verification
-
-The owner clarified that AIM development and testing belong on ws-ilya. Source
-was cloned/fetched directly from the public fork on that machine. No controller
-source bundle or PEM exception was used. Existing key fixtures were unchanged.
-Node and dependency preparation used the private test workspace; test execution
-used the existing root-owned `oxi-test-sandbox` with its network isolation intact,
-two-CPU affinity, two Turbo tasks and two Vitest workers. Compiler paths were
-explicit because the sandbox does not expose distribution alternatives in /etc.
-
-Verification at code commit `50637ae58d023d1efdd1a8e7d9e6de22f1fe5339`:
+At code commit `50637ae58d023d1efdd1a8e7d9e6de22f1fe5339`:
 
 - Server typecheck: PASS (`turbo run typecheck --filter=@bb/server`).
 - Complete server suite: 369 files passed, three corpus files skipped; 3814 tests
   passed, one corpus test skipped (`turbo run test --filter=@bb/server`).
-- The initial focused run passed all 25 new verifier cases and four existing
-  public authorization regression cases.
-- The first complete run exposed a missing offline FRP archive and three HOME
-  installer tests invoking real npm after a mocked 404. The FRP cache was warmed
-  from the official release and checked against the repository's pinned hash.
-  The HOME test now stubs npm, fails the mock install deliberately, and asserts
-  that the install branch was reached. All 53 installer and 12 tunnel tests passed
-  on focused reruns, followed by the complete successful run above.
+- Initial focused verification: 25 new verifier cases plus four existing public
+  authorization regression cases passed.
+- The first full run exposed a missing offline FRP archive and three HOME
+  installer tests calling real npm after a mocked 404. The FRP archive was fetched
+  from the official release and checked against the source-pinned hash. The HOME
+  fixture now stubs npm and asserts that the intended install branch was reached.
+  All 53 installer and 12 tunnel checks passed before the complete successful run.
 
-ServeLat (`aim-infra-read-v1`) reviewed the complete verifier and its complete test
-file in separate untruncated requests and returned PASS for both. This is a
-file-level supplemental review: the fork/commit was not in its repository
-projection, and it explicitly did not approve end-to-end authorization or
-production deployment. The unchanged transport, account selection, isolation and
-acceptance work described above remains required.
+At code commit `6930ec389284871085eb15eb29c93db3f57b2d28`:
+
+- Server typecheck: PASS.
+- Focused HTTP authorization, verifier and plugin SDK tests: 49 passed in three
+  files. HTTP guard tests exercise direct API refusal, forwarded-header spoofing,
+  thirty concurrent requests across two identities, policy revocation/outages,
+  expired principals, upgrade refusal and the existing daemon boundary.
+- The HTTP/RPC tests at this commit use trusted verifier fixtures. Real signed
+  ES384/RS256 tokens are covered separately by the verifier tests; the later
+  combined signed-token/policy/RPC test remains pending.
+
+External file-level review returned PASS for the complete verifier and its test
+file in separate untruncated requests. This review did not cover the later guard,
+policy loader, configuration, provider isolation or end-to-end acceptance, and
+explicitly did not approve production deployment.
+
+### Remaining verification and deployment
+
+The policy/startup draft at `b6adde8b7` was committed but not tested when the Linux
+host's canonical SSH transport became unreachable (readiness exit 30 / SSH exit
+255, connection timeout). No local-test fallback, alternate machine, key-transfer
+exception or production rollout was used.
+
+After access is restored, fetch the exact candidate from Git on the test host,
+run config and server typechecks, the config parser tests, policy/guard/verifier
+and plugin RPC tests, then the server suite as warranted by those changes. Keep
+source identity and results attached to the reviewed commit. Interactive login,
+provider selection, isolated execution, daemon delegation, two-client thread
+continuation and live restart/revocation acceptance remain outstanding.
