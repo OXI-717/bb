@@ -18,6 +18,7 @@ import {
 import { defaultFeatureFlags } from "@bb/domain";
 import { createMigratedConnection } from "@bb/db/testing";
 import { createApp } from "../../src/server.js";
+import type { TeamRequestAuthorization } from "../../src/services/team-request-authorization.js";
 import { PendingInteractionLifecycle } from "../../src/services/interactions/pending-interactions.js";
 import { createMachineAuthService } from "../../src/services/machine-auth.js";
 import { createProviderRegistryService } from "../../src/services/providers/provider-registry.js";
@@ -104,6 +105,7 @@ export type TestAppHarnessConfigOverrides = Partial<ServerRuntimeConfig> & {
   liveCommandsClock?: () => number;
   seedFirstPartyProviders?: boolean;
   tunnelIngressNow?: () => number;
+  teamRequestAuthorization?: TeamRequestAuthorization;
   extraProviders?: readonly {
     declaration: PluginProviderDeclaration;
     pluginId: string;
@@ -171,6 +173,7 @@ export async function createTestAppHarness(
     liveCommandsClock,
     seedFirstPartyProviders = true,
     tunnelIngressNow: _tunnelIngressNow,
+    teamRequestAuthorization,
     ...configOverrides
   } = overrides;
   const logger = createTestLogger();
@@ -344,8 +347,12 @@ export async function createTestAppHarness(
     watchInterests,
     sharedPorts,
   };
-  const { app, pluginCatalogService, pluginService, serverMove } =
-    createApp(deps);
+  const { app, pluginCatalogService, pluginService, serverMove } = createApp(
+    deps,
+    teamRequestAuthorization === undefined
+      ? undefined
+      : { teamRequestAuthorization },
+  );
   installDefaultEnvironmentProviders();
 
   return {
@@ -412,12 +419,14 @@ export async function startTestServer(
     pluginService,
     serverMove,
     tunnelIngress,
-  } = createApp(
-    harness.deps,
-    overrides.tunnelIngressNow === undefined
-      ? undefined
-      : { tunnelIngressNow: overrides.tunnelIngressNow },
-  );
+  } = createApp(harness.deps, {
+    ...(overrides.tunnelIngressNow === undefined
+      ? {}
+      : { tunnelIngressNow: overrides.tunnelIngressNow }),
+    ...(overrides.teamRequestAuthorization === undefined
+      ? {}
+      : { teamRequestAuthorization: overrides.teamRequestAuthorization }),
+  });
   const server = serve(
     {
       hostname: TEST_SERVER_HOST,

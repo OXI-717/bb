@@ -33,6 +33,10 @@ import { readFile, stat } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { extname, join, resolve } from "node:path";
 import { Hono } from "hono";
+import {
+  teamRequestAuthorization,
+  type TeamRequestAuthorization,
+} from "./services/team-request-authorization.js";
 import { terminalWebSocketQuerySchema } from "@bb/server-contract";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
@@ -205,6 +209,7 @@ export interface ServerMoveAppOptions {
 }
 
 interface CreateAppOptions {
+  teamRequestAuthorization?: TeamRequestAuthorization;
   bbAppArtifactService?: BbAppArtifactService;
   serverMove?: ServerMoveAppOptions;
   slowApiRequestLogThresholdMs?: number;
@@ -540,6 +545,9 @@ export function createApp(
       next,
     );
   });
+  if (options?.teamRequestAuthorization !== undefined) {
+    app.use("*", teamRequestAuthorization(options.teamRequestAuthorization));
+  }
   app.use("*", async (context, next) => {
     const path = context.req.path;
     if (!path.startsWith("/api/v1/") && !path.startsWith("/internal/")) {

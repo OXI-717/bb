@@ -1072,6 +1072,83 @@ describe("plugin bb.sdk against a running server", () => {
     }
   });
 
+  it("passes transport-verified client principals to RPC handlers without trusting forwarded identities", async () => {
+    const server = await startTestServer({
+      teamRequestAuthorization: {
+        async verify(authorization) {
+          if (
+            authorization !== "Bearer employee-one" &&
+            authorization !== "Bearer employee-two"
+          )
+            throw new Error("invalid");
+          return {
+            issuer: "https://identity.example/oidc",
+            subject: authorization.slice(7),
+            scopes: ["bb:access"],
+            expiresAt: Math.floor(Date.now() / 1000) + 60,
+          };
+        },
+        async authorize(_principal, operation) {
+          return (
+            operation.path === "/api/v1/plugins/callee/rpc/whoami" &&
+            operation.method === "POST"
+          );
+        },
+      },
+    });
+    const workDir = await mkdtemp(join(tmpdir(), "bb-plugin-rpc-principal-"));
+    try {
+      const rootDir = await writePlugin(workDir, {
+        name: "bb-plugin-callee",
+        serverSource: "export default function plugin() {}",
+      });
+      expect((await server.pluginService.installPath(rootDir)).status).toBe(
+        "running",
+      );
+      requireApi(server.pluginService, "callee").rpc.register(
+        defineRpcContract({ whoami: { input: z.null(), output: z.unknown() } }),
+        { whoami: (_input, context) => context.experimental_caller },
+      );
+      const url = `${server.baseUrl}/api/v1/plugins/callee/rpc/whoami`;
+      const unauthenticated = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-auth-request-user": "owner",
+        },
+        body: "null",
+      });
+      expect(unauthenticated.status).toBe(401);
+      for (const subject of ["employee-one", "employee-two"]) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${subject}`,
+            "content-type": "application/json",
+            "x-auth-request-user": "owner",
+          },
+          body: "null",
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          ok: true,
+          result: {
+            kind: "client",
+            experimental_principal: {
+              issuer: "https://identity.example/oidc",
+              subject,
+              scopes: ["bb:access"],
+            },
+          },
+        });
+      }
+    } finally {
+      await server.pluginService.stop();
+      await rm(workDir, { recursive: true, force: true });
+      await server.close();
+    }
+  });
+
   it("tells rpc handlers which plugin called them and treats every other caller as a client", async () => {
     const server = await startTestServer();
     const workDir = await mkdtemp(join(tmpdir(), "bb-plugin-rpc-caller-"));
