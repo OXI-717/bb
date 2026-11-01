@@ -1,6 +1,6 @@
 # Team authorization in one shared BB
 
-Status: unverified prototype and implementation proposal, 2026-11-01. No authorization boundary is shipped by this change.
+Status: verified token-validation prototype and implementation proposal, 2026-11-01. No authorization boundary is shipped by this change.
 
 ## Problem and acceptance
 
@@ -169,6 +169,36 @@ the transfer policy or delete the fixture to make the upload pass.
 
 Syntax parsing with Node and `git diff --check` passed on the controller; neither
 is a test result, a TypeScript typecheck, or proof of deployed authorization.
-The prototype remains unverified and is not suitable for deployment. Continue
-with an accepted complete-source test path on a test machine, then transport
-integration and the rest of the delivery sequence. No production access changed.
+These were the initial blockers; the following execution resolved them for the
+prototype. No production access changed.
+
+### Successful ws-ilya verification
+
+The owner clarified that AIM development and testing belong on ws-ilya. Source
+was cloned/fetched directly from the public fork on that machine. No controller
+source bundle or PEM exception was used. Existing key fixtures were unchanged.
+Node and dependency preparation used the private test workspace; test execution
+used the existing root-owned `oxi-test-sandbox` with its network isolation intact,
+two-CPU affinity, two Turbo tasks and two Vitest workers. Compiler paths were
+explicit because the sandbox does not expose distribution alternatives in /etc.
+
+Verification at code commit `50637ae58d023d1efdd1a8e7d9e6de22f1fe5339`:
+
+- Server typecheck: PASS (`turbo run typecheck --filter=@bb/server`).
+- Complete server suite: 369 files passed, three corpus files skipped; 3814 tests
+  passed, one corpus test skipped (`turbo run test --filter=@bb/server`).
+- The initial focused run passed all 25 new verifier cases and four existing
+  public authorization regression cases.
+- The first complete run exposed a missing offline FRP archive and three HOME
+  installer tests invoking real npm after a mocked 404. The FRP cache was warmed
+  from the official release and checked against the repository's pinned hash.
+  The HOME test now stubs npm, fails the mock install deliberately, and asserts
+  that the install branch was reached. All 53 installer and 12 tunnel tests passed
+  on focused reruns, followed by the complete successful run above.
+
+ServeLat (`aim-infra-read-v1`) reviewed the complete verifier and its complete test
+file in separate untruncated requests and returned PASS for both. This is a
+file-level supplemental review: the fork/commit was not in its repository
+projection, and it explicitly did not approve end-to-end authorization or
+production deployment. The unchanged transport, account selection, isolation and
+acceptance work described above remains required.
