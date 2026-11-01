@@ -362,7 +362,8 @@ not populate this value. It is absent in single-user mode and for plugin callers
 plugin-to-plugin calls do not inherit a human identity. This is an attribution
 contract, not approval of provider-account isolation or a complete team mode.
 Audit transport coverage, revocation, daemon delegation and resource ownership
-before stabilization. No startup configuration or interactive login is shipped yet.
+before stabilization. The startup policy supports restricted RPC ingress only;
+interactive login, provider account selection and host isolation remain outstanding.
 
 Docs: `backend-events.md`, `backend-sdk.md`.
 

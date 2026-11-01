@@ -219,6 +219,17 @@ yourself keeps your value.
 
 Launcher settings
 
+`BB_TEAM_RPC_POLICY_FILE` is a startup-only experimental POSIX setting for
+restricted RPC ingress. It names an absolute operator-owned policy file with
+trusted issuer, audience, JWKS URL, algorithms, a required scope and explicit
+subject/method bindings. Only listed POST plugin RPC methods are permitted;
+other client access, including the app, file/terminal APIs and WebSocket
+upgrades, is refused. A missing configured file fails startup; invalid live
+policy fails closed. Bindings reload on requests, verification settings require
+restart. It does not provide interactive login or isolate provider accounts.
+RPC callers authenticated by this policy carry a verified experimental principal
+through the same app, CLI (`bb plugin rpc call`) and SDK RPC endpoint.
+
 `bb-app config` and `bb-app env` reload runtime settings in a running server,
 but the CLI identifies settings that are startup-only, including binding/ports,
 data and the dev-app port, telemetry, inherited skill roots, and

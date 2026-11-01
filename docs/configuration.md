@@ -123,7 +123,7 @@ These entries are startup-only:
 - `BB_APP_SURFACE`, `BB_APP_URL` (when set through `bb-app env`),
   `BB_DATA_DIR`, `BB_DEV_APP_PORT`, and `BB_EXTERNAL_URL`
 - `BB_HOST_DAEMON_PORT` and `BB_INHERITED_SKILLS_ROOTS`
-- `BB_CONNECT_GATE_KEYS_URL`, `BB_LOG_LEVEL`,
+- `BB_CONNECT_GATE_KEYS_URL`, `BB_TEAM_RPC_POLICY_FILE`, `BB_LOG_LEVEL`,
   `BB_MANAGED_DEV_BUILTIN_PLUGIN_HOT_RELOAD`, `BB_MARKETPLACE_URL`,
   `BB_PERF_DIAGNOSTICS`, `BB_POSTHOG_API_KEY`, and `BB_TELEMETRY`
 - `BB_SERVER_BIND_HOST`, `BB_SERVER_PORT`, and all `BB_FF_*` feature flags
@@ -234,6 +234,24 @@ succeeds. Desktop/server IPC stays within the bundled process tree and does not
 change the host-daemon protocol.
 
 ## Common Keys
+
+`BB_TEAM_RPC_POLICY_FILE` is an experimental startup-only POSIX option for
+restricted RPC ingress. It must name an absolute regular file owned by the server
+user or root, without group/world write permission or a symlink. A configured
+missing, unreadable or invalid file stops startup. After startup, broken policy
+returns 503; removed bindings return 403 even for a still-valid access token.
+Leaving the variable unset preserves single-user behavior; an empty value is an error.
+
+The file has `version: 1`, trusted HTTPS `issuer` and `jwksUrl`, an `audience`, an
+explicit `algorithms` list (`ES384` or `RS256`), `requiredScope`, and `subjects`.
+Each subject has a `subject` string and `methods`; each method has `pluginId`,
+`method` and a `scopes` array. Only exact POST RPC routes and their required
+scopes are granted. All other client requests, including the app, terminal/file
+APIs and WebSocket upgrades, are refused. Process health stays public; daemon
+transport retains its existing separate authentication. This does not provide
+interactive sign-in, provider-account isolation or general multi-user BB.
+Only subject/method bindings reload per request. Changes to issuer, audience,
+JWKS endpoint, algorithms or the global required scope require a restart.
 
 | Key                            | Set with                                           | When to set             | Used for                                                                                                                                                                                                                                                                   |
 | ------------------------------ | -------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

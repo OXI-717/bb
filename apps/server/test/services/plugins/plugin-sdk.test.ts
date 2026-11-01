@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +36,7 @@ import { startTestServer, testLogger } from "../../helpers/test-app.js";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createNoopTelemetryService } from "../../../src/services/system/telemetry.js";
+import { loadTeamRpcAuthorization } from "../../../src/services/team-rpc-policy.js";
 
 const logger = testLogger as unknown as Logger;
 
@@ -1072,31 +1073,27 @@ describe("plugin bb.sdk against a running server", () => {
     }
   });
 
-  it("passes transport-verified client principals to RPC handlers without trusting forwarded identities", async () => {
-    const server = await startTestServer({
-      teamRequestAuthorization: {
-        async verify(authorization) {
-          if (
-            authorization !== "Bearer employee-one" &&
-            authorization !== "Bearer employee-two"
-          )
-            throw new Error("invalid");
-          return {
-            issuer: "https://identity.example/oidc",
-            subject: authorization.slice(7),
-            scopes: ["bb:access"],
-            expiresAt: Math.floor(Date.now() / 1000) + 60,
-          };
-        },
-        async authorize(_principal, operation) {
-          return (
-            operation.path === "/api/v1/plugins/callee/rpc/whoami" &&
-            operation.method === "POST"
-          );
-        },
-      },
-    });
+  it.skipIf(process.platform === "win32")("passes transport-verified client principals to RPC handlers without trusting forwarded identities", async () => {
     const workDir = await mkdtemp(join(tmpdir(), "bb-plugin-rpc-principal-"));
+    const pair = generateKeyPairSync("ec", { namedCurve: "secp384r1" });
+    const issuer = "https://identity.example/oidc";
+    const audience = "https://api.example/bb";
+    const policyFile = join(workDir, "policy.json");
+    await writeFile(policyFile, JSON.stringify({
+      version: 1, issuer, audience, jwksUrl: `${issuer}/jwks`, algorithms: ["ES384"], requiredScope: "bb:access",
+      subjects: ["employee-one", "employee-two"].map((subject) => ({ subject, methods: [{ pluginId: "callee", method: "whoami", scopes: [] }] })),
+    }), { mode: 0o600 });
+    const authorization = await loadTeamRpcAuthorization(policyFile, {
+      fetch: async () => Response.json({ keys: [{ ...pair.publicKey.export({ format: "jwk" }), kid: "test" }] }),
+    });
+    const server = await startTestServer({ teamRequestAuthorization: authorization });
+    const bearer = (subject: string) => {
+      const issuedAt = Math.floor(Date.now() / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: "ES384", kid: "test" })).toString("base64url");
+      const claims = Buffer.from(JSON.stringify({ iss: issuer, aud: audience, sub: subject, scope: "bb:access", iat: issuedAt, exp: issuedAt + 300, profileId: "owner" })).toString("base64url");
+      const content = `${header}.${claims}`;
+      return `Bearer ${content}.${sign("sha384", Buffer.from(content), { key: pair.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
+    };
     try {
       const rootDir = await writePlugin(workDir, {
         name: "bb-plugin-callee",
@@ -1119,11 +1116,12 @@ describe("plugin bb.sdk against a running server", () => {
         body: "null",
       });
       expect(unauthenticated.status).toBe(401);
-      for (const subject of ["employee-one", "employee-two"]) {
+      const tokens = { "employee-one": bearer("employee-one"), "employee-two": bearer("employee-two") };
+      for (const subject of ["employee-one", "employee-two"] as const) {
         const response = await fetch(url, {
           method: "POST",
           headers: {
-            authorization: `Bearer ${subject}`,
+            authorization: tokens[subject],
             "content-type": "application/json",
             "x-auth-request-user": "owner",
           },
@@ -1142,6 +1140,11 @@ describe("plugin bb.sdk against a running server", () => {
           },
         });
       }
+      const policy = JSON.parse(await readFile(policyFile, "utf8"));
+      policy.subjects = policy.subjects.filter((binding: { subject: string }) => binding.subject !== "employee-one");
+      await writeFile(policyFile, JSON.stringify(policy));
+      const revoked = await fetch(url, { method: "POST", headers: { authorization: tokens["employee-one"], "content-type": "application/json" }, body: "null" });
+      expect(revoked.status).toBe(403);
     } finally {
       await server.pluginService.stop();
       await rm(workDir, { recursive: true, force: true });
