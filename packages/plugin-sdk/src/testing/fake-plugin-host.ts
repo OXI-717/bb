@@ -1863,6 +1863,11 @@ function createFakePluginHostInternal(
       try {
         const value = await resolve(context);
         if (value === null) return null;
+        if (
+          value.status !== undefined &&
+          !["ready", "unavailable", "unknown"].includes(value.status)
+        )
+          throw new Error("invalid provider environment health status");
         if (value.label.trim().length === 0) {
           throw new Error("label must not be empty");
         }
@@ -1875,7 +1880,11 @@ function createFakePluginHostInternal(
           "warn",
           `provider environment health contribution failed: ${error instanceof Error ? error.message : String(error)}`,
         );
-        return null;
+        return {
+          status: "unknown",
+          label: "Credential proxy",
+          statusMessage: "Credential proxy readiness could not be checked.",
+        };
       }
     },
     async experimental_emitHostSignal(hostId, signal, payload) {

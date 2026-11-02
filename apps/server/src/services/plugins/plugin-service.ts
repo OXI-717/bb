@@ -2445,6 +2445,12 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
             return value;
           },
         );
+        if (!outcome.ok)
+          return {
+            status: "unknown",
+            label: "Credential proxy",
+            statusMessage: "Credential proxy readiness could not be checked.",
+          };
         if (outcome.ok && outcome.value !== null) return outcome.value;
       }
       return null;

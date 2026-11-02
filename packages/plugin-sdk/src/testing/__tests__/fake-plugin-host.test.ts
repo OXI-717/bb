@@ -2089,6 +2089,24 @@ describe("providers.experimental_contributeEnv", () => {
     ]);
   });
 
+  it("keeps failed credential health unknown instead of allowing local readiness", async () => {
+    const { bb, harness } = createFakePluginHost();
+    bb.providers.experimental_contributeEnv("codex", () => []);
+    bb.providers.experimental_contributeEnvHealth("codex", () => {
+      throw Error("private readiness error");
+    });
+    await expect(
+      harness.behavior.resolveProviderEnvHealth("codex", {
+        hostId: "host-one",
+        projectId: "project-one",
+      }),
+    ).resolves.toEqual({
+      status: "unknown",
+      label: "Credential proxy",
+      statusMessage: "Credential proxy readiness could not be checked.",
+    });
+  });
+
   it("resolves environment-backed provider health only beside an env resolver", async () => {
     const first = createFakePluginHost();
     first.bb.providers.experimental_contributeEnvHealth("claude-code", () => ({

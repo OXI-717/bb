@@ -168,6 +168,31 @@ describe("plugin service", () => {
     }
   });
 
+  it.each(["throw", "invalid"])(
+    "does not turn %s credential readiness into local readiness",
+    async (mode) => {
+      const source =
+        mode === "throw"
+          ? 'throw new Error("private readiness error");'
+          : 'return {status:"invalid",label:"Proxy",statusMessage:"not ready"};';
+      const rootDir = await writePlugin(workDir, {
+        name: "bb-plugin-readiness",
+        serverSource: `export default function plugin(bb) { bb.providers.experimental_contributeEnv("codex",()=>[]); bb.providers.experimental_contributeEnvHealth("codex",()=>{${source}}); }`,
+      });
+      expect((await service.installPath(rootDir)).status).toBe("running");
+      await expect(
+        service.resolveProviderEnvHealth({
+          providerId: "codex",
+          context: { hostId: "host-one", projectId: null },
+        }),
+      ).resolves.toEqual({
+        status: "unknown",
+        label: "Credential proxy",
+        statusMessage: "Credential proxy readiness could not be checked.",
+      });
+    },
+  );
+
   it.each(["startup", "retry"])(
     "reports starting while a %s factory is pending",
     async (mode) => {
