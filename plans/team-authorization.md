@@ -205,3 +205,31 @@ and plugin RPC tests, then the server suite as warranted by those changes. Keep
 source identity and results attached to the reviewed commit. Interactive login,
 provider selection, isolated execution, daemon delegation, two-client thread
 continuation and live restart/revocation acceptance remain outstanding.
+
+
+## Source review follow-up 2026-11-02
+
+The continuation located the actual core candidate in OXI-717/bb PR #7 at
+`7ad4697a28701b519597fc8d09a2b7e642c9a21c`. It was not present in the connected
+BB project's thread history or installed runtime. The separate automation
+approval app (team-ai-infrastructure PR #991) and AIM Team 0.1.5 are independent
+changes; their successful tests do not verify this core candidate.
+
+A separate read-only reviewer inspected all 24 changed paths and found one
+launcher lifecycle defect: `BB_TEAM_RPC_POLICY_FILE` was documented as startup-only
+but absent from the launcher's startup-only managed environment inventory.
+Changing it could print a successful live-reload notice while the running server
+kept its existing authorization mode. The follow-up adds the inventory entry,
+the existing startup-only regression case, and explicit enable/change/refresh/
+unset coverage. Documentation states that the full launcher must restart.
+These new tests have not yet run; source review and `git diff --check` are not
+execution evidence. Do not merge or enable team mode on production.
+
+On ws-ilya the existing remote-test Python module was available from the skills
+checkout, but its default fleet source directory was missing (doctor exit 70).
+A temporary oxi-fleet source clone was removed after its README established that
+full fleet transfer requires an owner-side export preflight and must not be
+reconstructed on a test runner. No unlock, key transfer, host service change or
+test execution occurred. Resume readiness from the existing authorized controller;
+this enrolled BB host alone does not supply that controller configuration. Existing
+sandbox, network and key-transfer restrictions remain in force.

@@ -135,6 +135,11 @@ changing or unsetting `BB_SERVER_BIND_HOST` does not close an existing
 `0.0.0.0` listener until that restart. `bb-app config refresh` names any
 startup-only keys present in `config.json` or `env.json`.
 
+`BB_TEAM_RPC_POLICY_FILE` constructs the team authorization guard at server startup.
+Setting it while the server is running does not enable that guard, and unsetting
+it does not remove the existing guard. Restart the full launcher after either
+change before relying on the new authorization mode.
+
 ## Stopping A Running bb
 
 A running `bb-app start` writes `<dataDir>/bb-app-runtime.json` (launcher
