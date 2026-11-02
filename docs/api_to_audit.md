@@ -354,6 +354,17 @@ is `{ kind: "plugin", pluginId }` for a loaded plugin's
 `bb.sdk.plugins.callRpc` and `{ kind: "client" }` for everyone else. A
 per-load token makes the identity unforgeable by clients.
 
+When the server's experimental request authorizer is configured, an authenticated
+client caller also carries `experimental_principal` with verified issuer, subject,
+scopes and expiry. App, CLI and SDK RPC requests use the same HTTP authorization
+path as core requests. Body fields, profiles and forwarded identity headers do
+not populate this value. It is absent in single-user mode and for plugin callers;
+plugin-to-plugin calls do not inherit a human identity. This is an attribution
+contract, not approval of provider-account isolation or a complete team mode.
+Audit transport coverage, revocation, daemon delegation and resource ownership
+before stabilization. The startup policy supports restricted RPC ingress only;
+interactive login, provider account selection and host isolation remain outstanding.
+
 Docs: `backend-events.md`, `backend-sdk.md`.
 
 Before stabilizing, audit whether other surfaces (HTTP routes, agent tools,

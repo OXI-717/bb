@@ -282,7 +282,15 @@ export function defineRpcContract<
  */
 export type ExperimentalPluginRpcCaller =
   | { readonly kind: "plugin"; readonly pluginId: string }
-  | { readonly kind: "client" };
+  | {
+      readonly kind: "client";
+      readonly experimental_principal?: {
+        readonly issuer: string;
+        readonly subject: string;
+        readonly scopes: readonly string[];
+        readonly expiresAt: number;
+      };
+    };
 
 /** Second argument of every rpc handler. */
 export interface ExperimentalPluginRpcHandlerContext {

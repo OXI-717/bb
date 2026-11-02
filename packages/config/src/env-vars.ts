@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { delimiter } from "node:path";
+import { delimiter, isAbsolute } from "node:path";
 import { defaultFeatureFlags } from "@bb/domain";
 import { DEFAULTS } from "./defaults.js";
 import {
@@ -280,6 +280,17 @@ export const BB_CONNECT_GATE_KEYS_URL_ENV = defineEnvVar<string>({
     "URL of the bb connect next gate public key set the server's tunnel ingress verifies gate assertions with. Point it at a local file server to test the ingress.",
   name: "BB_CONNECT_GATE_KEYS_URL",
   parse: parseRequiredUrlEnvValue,
+});
+
+export const BB_TEAM_RPC_POLICY_FILE_ENV = defineEnvVar<string>({
+  description: "Experimental RPC-only authorization policy. Requires a protected absolute POSIX file path; invalid or missing configured policy fails closed.",
+  name: "BB_TEAM_RPC_POLICY_FILE",
+  parse: ({ name, value }) => {
+    if (!isAbsolute(value) || /[\x00\r\n]/.test(value)) {
+      throw new Error(`${name} must be a nonempty absolute path`);
+    }
+    return value;
+  },
 });
 
 export const BB_POSTHOG_API_KEY_ENV = defineEnvVar<string>({

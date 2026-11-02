@@ -28,6 +28,7 @@ import type {
 } from "../services/plugins/plugin-api.js";
 import { PluginSettingsValidationError } from "../services/plugins/plugin-settings.js";
 import { PLUGIN_RPC_CALLER_HEADER } from "../services/plugins/plugin-rpc-caller.js";
+import { getTeamRequestPrincipal } from "../services/team-request-authorization.js";
 import type { PluginInstallJobs } from "../services/plugins/plugin-install-jobs.js";
 import {
   prefersRespondAsync,
@@ -998,12 +999,17 @@ export function registerPluginRoutes(
         404,
       );
     }
+    const principal = getTeamRequestPrincipal(context);
+    const caller =
+      callerResolution.caller.kind === "client" && principal !== undefined
+        ? { ...callerResolution.caller, experimental_principal: principal }
+        : callerResolution.caller;
     const outcome = await plugins.invokeRpcHandler(
       lookup.owner,
       method,
       lookup.value,
       input,
-      callerResolution.caller,
+      caller,
       context.req.raw.signal,
     );
     if (!outcome.ok) {

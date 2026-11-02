@@ -17,6 +17,7 @@ import {
 } from "@bb/db";
 import { initDb } from "./db.js";
 import { createApp } from "./server.js";
+import { loadTeamRpcAuthorization } from "./services/team-rpc-policy.js";
 import { PendingInteractionLifecycle } from "./services/interactions/pending-interactions.js";
 import { createMachineAuthService } from "./services/machine-auth.js";
 import { resolveBuiltinSkillsRootPath } from "./services/skills/builtin-skills-copy.js";
@@ -111,6 +112,9 @@ export function startServerPlugins(
 }
 
 export async function runServer(serverConfig: ServerConfig): Promise<void> {
+  const teamRequestAuthorization = serverConfig.BB_TEAM_RPC_POLICY_FILE === undefined
+    ? undefined
+    : await loadTeamRpcAuthorization(serverConfig.BB_TEAM_RPC_POLICY_FILE);
   const logger = createLogger({
     component: "server",
     dataDir: serverConfig.BB_DATA_DIR,
@@ -345,6 +349,7 @@ export async function runServer(serverConfig: ServerConfig): Promise<void> {
         retireProcess: retireServerProcess,
       },
       staticDir,
+      ...(teamRequestAuthorization === undefined ? {} : { teamRequestAuthorization }),
       performanceDiagnosticsEnabled: () => diagnosticsEnabled(),
     },
   );

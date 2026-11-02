@@ -1137,6 +1137,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "mutate, isPending and pendingInputs settle at write acknowledgement; matched reads refresh in the background. Shared predictions stay until confirmed reads arrive, or roll back on write failure",
           "Optimistic updaters must be pure and replayable; generate IDs and timestamps before mutate",
           "RPC error codes may grow: switch on error.code with a fallback. Newer server codes become unknown_error with the original serverCode; transport_error and invalid_response cover client failures. CLI output preserves unknown codes",
+          "With the experimental server request authorizer configured, client callers can carry experimental_principal with verified issuer, subject, scopes and expiry. App, CLI and SDK calls use the same HTTP guard. Profiles and forwarded usernames do not populate it; plugin callers do not inherit it. Scope and resource authorization remain required",
         ],
         apiSymbols: [
           "PluginRpc",

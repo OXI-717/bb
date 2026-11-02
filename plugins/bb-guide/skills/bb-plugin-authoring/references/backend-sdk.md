@@ -119,6 +119,13 @@ only the server holds, and `{ kind: "client" }` for everything else: the app,
 CLI, agents, and bb. Tests set it with
 `harness.callRpc(method, input, { experimental_caller })`.
 
+With the experimental server request authorizer configured, a client caller can
+also include `experimental_principal: { issuer, subject, scopes, expiresAt }`.
+These fields come from transport verification, never a profile, body or forwarded
+username. They are absent in single-user mode and on plugin callers. A plugin
+call does not automatically delegate its human initiator. Check scopes and
+resource ownership explicitly; this field alone does not isolate provider access.
+
 ```ts
 handOver(input, { experimental_caller: caller }) {
   if (caller.kind !== "plugin" || caller.pluginId !== "connect") {

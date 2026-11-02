@@ -168,6 +168,7 @@ const startupOnlyManagedEnvCases: StartupOnlyManagedEnvCase[] = [
   { key: "BB_POSTHOG_API_KEY", value: "test-posthog-key" },
   { key: "BB_SERVER_BIND_HOST", value: "127.0.0.1" },
   { key: "BB_SERVER_PORT", value: "48886" },
+  { key: "BB_TEAM_RPC_POLICY_FILE", value: "/tmp/bb-team-policy.json" },
   { key: "BB_TELEMETRY", value: "false" },
 ];
 
@@ -1554,6 +1555,43 @@ describe("bb-app launcher", () => {
         expect(output).not.toContain("Reloaded running bb server config.");
       }
       expect(server.reloadCount()).toBe(startupOnlyManagedEnvCases.length);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("requires a restart when setting, changing, refreshing or unsetting team authorization", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "bb-app-team-policy-env-"));
+    const server = await startConfigReloadTestServer();
+
+    try {
+      for (const command of [
+        ["env", "set", "BB_TEAM_RPC_POLICY_FILE", "/tmp/team-policy-one.json"],
+        ["env", "set", "BB_TEAM_RPC_POLICY_FILE", "/tmp/team-policy-two.json"],
+        ["config", "refresh"],
+        ["env", "unset", "BB_TEAM_RPC_POLICY_FILE"],
+      ]) {
+        const output = await captureStdout(() =>
+          runBbApp([
+            "--data-dir",
+            dataDir,
+            "--server-port",
+            String(server.port),
+            ...command,
+          ]),
+        );
+
+        if (command[0] === "config") {
+          expect(output).toContain(
+            "Startup-only settings currently configured (BB_TEAM_RPC_POLICY_FILE) apply on the next full bb-app restart.",
+          );
+        } else {
+          expect(output).toContain("BB_TEAM_RPC_POLICY_FILE is startup-only.");
+          expect(output).toContain("a full bb-app restart is required");
+          expect(output).not.toContain("Reloaded running bb server config.");
+        }
+      }
+      expect(server.reloadCount()).toBe(4);
     } finally {
       await server.close();
     }

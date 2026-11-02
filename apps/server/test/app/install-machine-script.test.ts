@@ -343,6 +343,10 @@ exec '${process.execPath}' "$@"
       );
       writeExecutable(join(fixture.binDir, "id"), `#!/bin/sh\necho ${uid}\n`);
       writeCurlArtifactMock(fixture, 404);
+      writeExecutable(
+        join(fixture.binDir, "npm"),
+        `#!/bin/sh\n: >'${join(fixture.dataDir, "npm-invoked")}'\nexit 1\n`,
+      );
       const result = runScript(BOOTSTRAP_ARGS, fixture, {
         HOME: unset ? undefined : fixture.homeDir,
       });
@@ -350,6 +354,7 @@ exec '${process.execPath}' "$@"
       expect(result.stderr).not.toContain("HOME");
       expect(existsSync(join(fixture.dataDir, "resolved-home"))).toBe(unset);
       expect(existsSync(join(fixture.homeDir, ".local/bin/bb"))).toBe(true);
+      expect(existsSync(join(fixture.dataDir, "npm-invoked"))).toBe(true);
       expect(existsSync(join(fixture.dataDir, "auth.json"))).toBe(false);
     },
   );

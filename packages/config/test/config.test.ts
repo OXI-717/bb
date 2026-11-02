@@ -339,6 +339,15 @@ describe("consumer-specific config", () => {
     ).toThrow("BB_CONNECT_GATE_KEYS_URL");
   });
 
+  it("never treats a blank or relative configured team policy path as disabled", () => {
+    expect(loadServerConfig({ env: createServerRuntimeEnv({}) }).BB_TEAM_RPC_POLICY_FILE).toBeUndefined();
+    const file = path.resolve("/tmp/team-policy.json");
+    expect(loadServerConfig({ env: createServerRuntimeEnv({ BB_TEAM_RPC_POLICY_FILE: file }) }).BB_TEAM_RPC_POLICY_FILE).toBe(file);
+    for (const invalid of ["", "policy.json", "\n"]) {
+      expect(() => loadServerConfig({ env: createServerRuntimeEnv({ BB_TEAM_RPC_POLICY_FILE: invalid }) })).toThrow("BB_TEAM_RPC_POLICY_FILE");
+    }
+  });
+
   it("validates the opt-in performance diagnostics setting", () => {
     expect(
       loadServerConfig({

@@ -22,6 +22,7 @@ import {
   BB_APP_SURFACE_ENV,
   BB_APP_VERSION_ENV,
   BB_CONNECT_GATE_KEYS_URL_ENV,
+  BB_TEAM_RPC_POLICY_FILE_ENV,
   BB_EXTERNAL_URL_ENV,
   BB_INHERITED_SKILLS_ROOTS_ENV,
   BB_MARKETPLACE_URL_ENV,
@@ -59,6 +60,7 @@ export interface ServerConfig
   BB_APP_SURFACE: AppSurface;
   BB_APP_VERSION: string;
   BB_CONNECT_GATE_KEYS_URL: string;
+  BB_TEAM_RPC_POLICY_FILE?: string;
   BB_DEV_APP_PORT?: number;
   BB_EXTERNAL_URL: string;
   BB_HOST_DAEMON_PORT: number;
@@ -257,5 +259,10 @@ export function loadServerConfig(
     }),
   });
 
+  assignIfDefined({
+    key: "BB_TEAM_RPC_POLICY_FILE",
+    target: config,
+    value: readOptionalEnvVar({ context: loader.context, definition: BB_TEAM_RPC_POLICY_FILE_ENV, env: loader.env }),
+  });
   return config;
 }
