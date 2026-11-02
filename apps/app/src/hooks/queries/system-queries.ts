@@ -75,7 +75,8 @@ interface SystemExecutionOptionsQueryArgs {
 interface UseSystemProviderStatesOptions extends QueryOptions {
   environmentId?: string;
   hostId?: string;
-  poll?: boolean;
+  projectId?: string;
+  poll?: boolean | number;
 }
 
 type SystemProviderRoutingArgs =
@@ -638,17 +639,25 @@ export function systemProviderStatesQueryOptions(
   const environmentId = options.environmentId ?? null;
   const hostId = options.hostId ?? null;
   return queryOptions<SystemProviderStatesResponse>({
-    queryKey: systemProviderStatesQueryKey({ environmentId, hostId }),
+    queryKey: systemProviderStatesQueryKey({
+      environmentId,
+      hostId,
+      projectId: options.projectId ?? null,
+    }),
     queryFn: ({ signal }) =>
       sdk.system.providerStates({
         environmentId: options.environmentId,
         hostId: options.hostId,
+        projectId: options.projectId,
         signal,
       }),
     enabled: options.enabled ?? true,
     ...(options.poll === false
       ? { staleTime: 60_000 }
-      : { refetchInterval: 15_000 }),
+      : {
+          refetchInterval:
+            typeof options.poll === "number" ? options.poll : 15_000,
+        }),
   });
 }
 

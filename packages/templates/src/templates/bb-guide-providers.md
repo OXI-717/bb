@@ -11,15 +11,24 @@ Providers are agent backends (e.g., codex, claude-code). Each supports different
 
   bb provider list [--machine <id-or-name> | --environment <id>]
                                           List available providers
+  bb provider states [--machine <id-or-name> | --environment <id>]
+                     [--project <id>] [--json]
+                                          Check current host and credential readiness
   bb provider models [providerId] [--machine <id-or-name> | --environment <id>]
                      [--project <id>]
     [--selected-model <model-id>]
                                           List models for a provider
 
+`states` checks readiness without a model request. Credential proxies can report
+project-specific quota or routing denials; an unknown or offline result is not
+proof the provider works. The composer rechecks readiness every minute while
+mounted and disables new provider selections that are not ready, with the
+reported reason. It does not move existing sessions to another provider.
+
 Use these before spawning threads if you are unsure which provider or model to use.
 `--host` is an alias for `--machine`. Machine and environment selectors are
 mutually exclusive because an environment already selects its machine. When no
-selector is supplied, both commands intentionally inspect the server machine.
+selector is supplied, these commands intentionally inspect the server machine.
 `bb guide threads` describes how `bb thread spawn` picks a default provider and
 model.
 

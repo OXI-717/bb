@@ -2430,6 +2430,12 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
               `timed out after ${providerEnvResolveTimeoutMs}ms`,
             );
             if (value === null) return null;
+            if (
+              value.status !== undefined &&
+              !["ready", "unavailable", "unknown"].includes(value.status)
+            ) {
+              throw new Error("invalid provider environment health status");
+            }
             if (value.label.trim().length === 0) {
               throw new Error("label must not be empty");
             }

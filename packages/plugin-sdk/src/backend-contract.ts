@@ -1794,9 +1794,11 @@ export interface ExperimentalPluginProviderEnvEntry {
 
 export interface ExperimentalPluginProviderEnvHealthContext {
   hostId: string;
+  projectId?: string | null;
 }
 
 export interface ExperimentalPluginProviderEnvHealth {
+  status?: "ready" | "unavailable" | "unknown";
   label: string;
   statusMessage: string;
 }

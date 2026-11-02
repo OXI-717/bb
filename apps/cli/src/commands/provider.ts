@@ -101,6 +101,39 @@ export function registerProviderCommands(
       }),
     );
 
+  addProviderRoutingOptions(provider.command("states"))
+    .description(
+      "Check current provider readiness without starting a model request",
+    )
+    .option("--project <id>", "Project whose account policy applies")
+    .option("--json", "Print machine-readable JSON output")
+    .action(
+      action(async (opts: ProviderModelsCommandOptions) => {
+        if (opts.project !== undefined && opts.environment !== undefined) {
+          throw new Error("Cannot combine --project with --environment.");
+        }
+        const serverUrl = getUrl();
+        const routing = await resolveMachineEnvironmentRouting(opts, serverUrl);
+        const result = await createCliBbSdk(serverUrl).system.providerStates({
+          ...routing,
+          ...(opts.project === undefined ? {} : { projectId: opts.project }),
+        });
+        if (outputJson(opts, result)) return;
+        const rows = result.providers.map((entry) => [
+          entry.providerId,
+          entry.status,
+          entry.statusMessage ?? "",
+        ]);
+        printBorderlessTable(
+          {
+            head: ["ID", "Readiness", "Reason"],
+            colWidths: columnWidths(rows, [4, 9, 6]),
+          },
+          rows,
+        );
+      }),
+    );
+
   for (const enabled of [true, false]) {
     provider
       .command(`${enabled ? "enable" : "disable"} <providerId>`)

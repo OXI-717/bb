@@ -56,9 +56,7 @@ import {
 } from "./model-picker-menu";
 import { ModelReasoningMenu } from "./ModelReasoningMenuSplit";
 import { searchPickerOptions } from "@bb/shared-ui/picker-search";
-import {
-  useResetPickerScroll,
-} from "@bb/shared-ui/hooks/use-reset-picker-scroll";
+import { useResetPickerScroll } from "@bb/shared-ui/hooks/use-reset-picker-scroll";
 import { formatModelLoadErrorText } from "./model-load-error-message";
 import {
   useAppCommandContext,
@@ -311,7 +309,11 @@ export function ModelReasoningPicker({
     providerOptions.length > 1;
   const queryClient = useQueryClient();
   const prefetchProviderTab = (providerId: string) => {
-    if (providerId === selectedProviderId) {
+    if (
+      providerId === selectedProviderId ||
+      providerOptions.find((provider) => provider.value === providerId)
+        ?.disabled
+    ) {
       return;
     }
     prefetchSystemExecutionOptions(queryClient, {
@@ -613,6 +615,11 @@ export function ModelReasoningPicker({
 
   const handleHandoffProviderSelect = useCallback(
     (providerId: string) => {
+      if (
+        providerOptions.find((provider) => provider.value === providerId)
+          ?.disabled
+      )
+        return;
       handoff?.onStart();
       setHandoffMode(true);
       setPreviewProviderId(
@@ -624,10 +631,15 @@ export function ModelReasoningPicker({
       setSearchQuery("");
       setActiveIndex(-1);
     },
-    [handoff, selectedProviderId],
+    [handoff, selectedProviderId, providerOptions],
   );
   const handleProviderSelect = useCallback(
     (providerId: string) => {
+      if (
+        providerOptions.find((provider) => provider.value === providerId)
+          ?.disabled
+      )
+        return;
       if (
         open &&
         handoff !== undefined &&
@@ -647,6 +659,7 @@ export function ModelReasoningPicker({
       handoff,
       handoffMode,
       handleHandoffProviderSelect,
+      providerOptions,
       onSelectedProviderChange,
       open,
       selectedProviderId,
@@ -769,8 +782,14 @@ export function ModelReasoningPicker({
       if (handoffMode) {
         const next =
           index === 0
-            ? nextCycleValue(providerOptions, activeProviderId)
-            : previousCycleValue(providerOptions, activeProviderId);
+            ? nextCycleValue(
+                providerOptions.filter((provider) => !provider.disabled),
+                activeProviderId,
+              )
+            : previousCycleValue(
+                providerOptions.filter((provider) => !provider.disabled),
+                activeProviderId,
+              );
         if (next !== null) {
           handleHandoffProviderSelect(next);
         }
@@ -779,8 +798,14 @@ export function ModelReasoningPicker({
       if (canSwitchProviders && onSelectedProviderChange !== undefined) {
         const next =
           index === 0
-            ? nextCycleValue(providerOptions, selectedProviderId)
-            : previousCycleValue(providerOptions, selectedProviderId);
+            ? nextCycleValue(
+                providerOptions.filter((provider) => !provider.disabled),
+                selectedProviderId,
+              )
+            : previousCycleValue(
+                providerOptions.filter((provider) => !provider.disabled),
+                selectedProviderId,
+              );
         if (next !== null) {
           handleProviderSelect(next);
         }
@@ -1061,10 +1086,12 @@ export function ModelReasoningPicker({
                 <button
                   key={provider.value}
                   type="button"
+                  disabled={provider.disabled}
                   title={
-                    isHandoffSource
+                    provider.disabledReason ??
+                    (isHandoffSource
                       ? `${provider.label} (current thread)`
-                      : provider.label
+                      : provider.label)
                   }
                   onMouseDown={(event) => event.preventDefault()}
                   onPointerEnter={() => prefetchProviderTab(provider.value)}
@@ -1076,7 +1103,7 @@ export function ModelReasoningPicker({
                     handleProviderSelect(provider.value);
                   }}
                   className={cn(
-                    "flex items-center justify-center border-b-2 focus-visible:outline-none",
+                    "flex items-center justify-center border-b-2 focus-visible:outline-none disabled:opacity-40",
                     LIST_HOVER_TRANSITION,
                     COARSE_POINTER_PROVIDER_TAB_SIZE_CLASS,
                     isActive

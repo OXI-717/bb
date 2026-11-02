@@ -98,10 +98,19 @@ const systemProviderHostQueryFields = {
 export const systemProvidersQuerySchema = z
   .object({
     ...systemProviderHostQueryFields,
+    projectId: z.string().min(1),
     capability: z.enum(["usage"]),
   })
   .partial()
-  .superRefine(rejectMultipleWorkspaceSelectors);
+  .superRefine(rejectMultipleWorkspaceSelectors)
+  .superRefine((value, context) => {
+    if (value.environmentId !== undefined && value.projectId !== undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "projectId and environmentId are mutually exclusive",
+      });
+    }
+  });
 export type SystemProvidersQuery = z.infer<typeof systemProvidersQuerySchema>;
 
 export const systemExecutionOptionsQuerySchema = z

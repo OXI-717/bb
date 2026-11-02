@@ -1,3 +1,4 @@
+import { providerReadinessOption } from "./thread-creation-options/provider-readiness";
 import {
   useCallback,
   useEffect,
@@ -382,9 +383,13 @@ export function useThreadCreationOptions(
   const shouldResolveReadyProvider =
     canResolveReadyProvider && initialReadyProvider.status === "unresolved";
   const providerStatesQuery = useSystemProviderStates({
-    enabled: shouldResolveReadyProvider,
+    enabled: executionOptionsQueryEnabled,
     ...executionOptionsRouting,
-    poll: false,
+    ...(executionOptionsRouting.environmentId === undefined &&
+    catalogProjectId !== undefined
+      ? { projectId: catalogProjectId }
+      : {}),
+    poll: 60_000,
   });
   const queriedReadyProviderId = shouldResolveReadyProvider
     ? providerStatesQuery.data?.providers.find(
@@ -529,6 +534,12 @@ export function useThreadCreationOptions(
       providers.map((p) => ({
         value: p.id,
         label: p.displayName,
+        ...providerReadinessOption(
+          p.id,
+          providerStatesQuery.isError
+            ? undefined
+            : providerStatesQuery.data?.providers,
+        ),
         icon: getProviderIconInfo("agent", p.id, p)?.icon,
         ...(p.strings?.brandPrefix === undefined
           ? {}
@@ -540,7 +551,7 @@ export function useThreadCreationOptions(
           ? {}
           : { installUrl: p.strings.installUrl }),
       })),
-    [providers],
+    [providers, providerStatesQuery.data, providerStatesQuery.isError],
   );
 
   const baseCatalogSelection = useMemo(

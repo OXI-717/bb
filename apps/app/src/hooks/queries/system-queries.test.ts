@@ -812,6 +812,37 @@ describe("useSystemProviderStates", () => {
     expect(queryClient.getQueryState(hostBKey)).toBeDefined();
   });
 
+  it("keeps project policy checks isolated and polls without a model request", async () => {
+    vi.mocked(sdk.system.providerStates).mockResolvedValue(
+      providerStates("pooled"),
+    );
+    const options = systemProviderStatesQueryOptions({
+      hostId: "host-a",
+      projectId: "project-a",
+      poll: 60_000,
+    });
+    expect(options.refetchInterval).toBe(60_000);
+    expect(options.queryKey).not.toEqual(
+      systemProviderStatesQueryOptions({
+        hostId: "host-a",
+        projectId: "project-b",
+      }).queryKey,
+    );
+    const observer = observe(
+      createQueryClientTestHarness().queryClient,
+      options,
+    );
+    await vi.waitFor(() =>
+      expect(observer.getCurrentResult().data).toBeDefined(),
+    );
+    expect(sdk.system.providerStates).toHaveBeenCalledWith({
+      hostId: "host-a",
+      environmentId: undefined,
+      projectId: "project-a",
+      signal: expect.any(AbortSignal),
+    });
+  });
+
   it("routes reusable worktrees through their environment", async () => {
     vi.mocked(sdk.system.providerStates).mockResolvedValue(
       providerStates("claude-code"),
@@ -829,6 +860,7 @@ describe("useSystemProviderStates", () => {
       expect(sdk.system.providerStates).toHaveBeenCalledWith({
         environmentId: "env-remote",
         hostId: undefined,
+        projectId: undefined,
         signal: expect.any(AbortSignal),
       });
     });

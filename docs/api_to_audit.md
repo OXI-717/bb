@@ -407,17 +407,26 @@ Docs: `backend-events.md`, `testing.md`.
 
 ## `bb.providers.experimental_contributeEnvHealth`
 
-Registers one host-scoped readiness resolver beside a provider environment
-contribution. When the bridge reports `unauthenticated` or `expired`, a
-non-null answer presents the provider as ready with its label and status
-message.
+Registers one host/project-scoped readiness resolver beside a provider environment
+contribution. After the bridge confirms a usable installation, the resolver can
+report `ready`, `unavailable` or `unknown`. An omitted status retains legacy
+ready semantics. Negative answers are returned as system readiness `unknown`
+with the supplied reason and no local login instruction; they do not assert an
+authentication failure. Installation, version and unknown host failures cannot
+be overridden. The server resolves project identity from the selected environment
+or a validated project ID. Older servers omit `projectId`.
+
+Core callers: the periodically checked model picker, onboarding, machine settings
+and `bb provider states`, all through `getProviderStates`. No model request or
+credential refresh is performed by core.
 
 Docs: `providers.md`.
 
 **Audit before stabilizing.**
 
-1. Confirm readiness should override only `unauthenticated` and `expired`, not
-   installation or unknown failures.
+1. Confirm negative proxy readiness and the system `unknown` presentation remain
+   appropriate for unavailable quota or credentials, without hiding installation
+   or unknown host failures.
 2. Decide whether the contribution should report account identity or usage in
    addition to a label and status message.
 3. Confirm the first available resolver in plugin load order is the right

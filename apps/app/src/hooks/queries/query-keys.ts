@@ -427,6 +427,7 @@ type SystemProviderStatesQueryKey = readonly [
   typeof SYSTEM_PROVIDER_STATES_QUERY_KEY,
   string | null,
   string | null,
+  string | null,
 ];
 type SystemExecutionOptionsQueryKey = readonly [
   typeof SYSTEM_EXECUTION_OPTIONS_QUERY_KEY,
@@ -1013,9 +1014,17 @@ export function hostProviderCliStatusQueryKey(
 }
 
 export function systemProviderStatesQueryKey(
-  args: Pick<SystemExecutionOptionsQueryKeyArgs, "environmentId" | "hostId">,
+  args: Pick<
+    SystemExecutionOptionsQueryKeyArgs,
+    "environmentId" | "hostId" | "projectId"
+  >,
 ): SystemProviderStatesQueryKey {
-  return [SYSTEM_PROVIDER_STATES_QUERY_KEY, args.environmentId, args.hostId];
+  return [
+    SYSTEM_PROVIDER_STATES_QUERY_KEY,
+    args.environmentId,
+    args.hostId,
+    args.projectId ?? null,
+  ];
 }
 
 interface SystemExecutionOptionsQueryKeyArgs {

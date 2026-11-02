@@ -406,6 +406,7 @@ export function createSystemArea(args: CreateSdkAreaArgs): SystemArea {
             query: {
               environmentId: input.environmentId,
               hostId: input.hostId,
+              projectId: input.projectId,
             },
           },
           ...signalRequestArgs(input.signal),

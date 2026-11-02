@@ -146,6 +146,86 @@ describe("getProviderStates", () => {
     });
   });
 
+  it.each([
+    "ready",
+    "not_installed",
+    "unsupported_version",
+    "unknown",
+  ] as const)(
+    "does not let pooled credentials hide host %s state and honors pool denial",
+    async (hostStatus) => {
+      await withTestHarness(async (harness) => {
+        const resolve = vi.fn(async () => ({
+          status: "unavailable" as const,
+          label: "Pool",
+          statusMessage: "No selectable account for this project.",
+        }));
+        setPluginAgentContributions({
+          listSkillRootContributions: () => [],
+          listAgentTools: () => [],
+          listInstructionContributions: () => [],
+          findAgentTool: () => undefined,
+          invokeAgentTool: async () => ({ success: false, contentItems: [] }),
+          resolveMention: async () => ({ ok: false, error: "unused" }),
+          resolveProviderEnvHealth: resolve,
+        });
+        try {
+          const { host, session } = seedHostSession(harness.deps);
+          const { project } = seedProjectWithSource(harness.deps, {
+            hostId: host.id,
+          });
+          const environment = seedEnvironment(harness.deps, {
+            hostId: host.id,
+            projectId: project.id,
+          });
+          registerHostRpcResponder(harness, {
+            hostId: host.id,
+            sessionId: session.id,
+            handle: (request) => {
+              if (request.command.type !== "provider.health")
+                throw new Error("unexpected request");
+              return {
+                ok: true,
+                result: {
+                  supported: true,
+                  health: {
+                    ...readyHealth(request.command.providerId),
+                    status: hostStatus,
+                  },
+                },
+              };
+            },
+          });
+          const result = await getProviderStates(harness.deps, {
+            environmentId: environment.id,
+          });
+          expect(
+            result.providers.find(
+              (entry) => entry.providerId === "claude-code",
+            ),
+          ).toMatchObject(
+            hostStatus === "ready"
+              ? {
+                  status: "unknown",
+                  statusMessage: "No selectable account for this project.",
+                  accountEmail: null,
+                  loginCommand: null,
+                }
+              : { status: hostStatus },
+          );
+          if (hostStatus === "ready")
+            expect(resolve).toHaveBeenCalledWith({
+              providerId: "claude-code",
+              context: { hostId: host.id, projectId: project.id },
+            });
+          else expect(resolve).not.toHaveBeenCalled();
+        } finally {
+          setPluginAgentContributions(undefined);
+        }
+      });
+    },
+  );
+
   it("asks each provider bridge and preserves model-picker order", async () => {
     await withTestHarness(async (harness) => {
       const { host, session } = seedHostSession(harness.deps);

@@ -63,6 +63,45 @@ describe("bb provider command output", () => {
     ]);
   });
 
+  it("bb provider states requests scoped readiness without model discovery", async () => {
+    const get = vi.fn(async () => ({
+      providers: [
+        {
+          providerId: "pooled",
+          status: "unknown",
+          statusMessage: "Quota exhausted",
+        },
+      ],
+    }));
+    stubServerApi({ "v1.system.providers.state.$get": get });
+    await runCommand(
+      ["provider", "states", "--project", "project-a", "--json"],
+      register,
+    );
+    expect(get).toHaveBeenCalledWith({
+      query: {
+        environmentId: undefined,
+        hostId: undefined,
+        projectId: "project-a",
+      },
+    });
+    expect(collectLogPayloads(vi.mocked(console.log))).toEqual([
+      JSON.stringify(
+        {
+          providers: [
+            {
+              providerId: "pooled",
+              status: "unknown",
+              statusMessage: "Quota exhausted",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    ]);
+  });
+
   it("bb provider models includes a matching selected-only model", async () => {
     const get = vi.fn(async () => ({
       providers: [],

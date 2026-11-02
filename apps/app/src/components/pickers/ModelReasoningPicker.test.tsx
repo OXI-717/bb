@@ -772,6 +772,29 @@ describe("ModelReasoningPicker", () => {
     ).not.toContain("max-h-");
   });
 
+  it("shows a denied provider reason without selecting or prefetching it", () => {
+    const { onSelectedProviderChange } = renderPicker({
+      pickerProviderOptions: providerOptions.map((provider) =>
+        provider.value === "claude-code"
+          ? {
+              ...provider,
+              disabled: true,
+              disabledReason: "No selectable pool account",
+            }
+          : provider,
+      ),
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Provider, model and reasoning" }),
+    );
+    const denied = screen.getByTitle("No selectable pool account");
+    expect((denied as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.pointerEnter(denied);
+    fireEvent.click(denied);
+    expect(onSelectedProviderChange).not.toHaveBeenCalled();
+    expect(sdk.system.executionOptions).not.toHaveBeenCalled();
+  });
+
   it("commits a provider tab immediately and keeps its models selectable", async () => {
     const { onSelectedProviderChange, onModelChange } = renderPicker();
 

@@ -192,6 +192,7 @@ export interface PluginResolvedProviderEnv {
 }
 
 export interface PluginResolvedProviderEnvHealth {
+  status?: "ready" | "unavailable" | "unknown";
   label: string;
   statusMessage: string;
 }

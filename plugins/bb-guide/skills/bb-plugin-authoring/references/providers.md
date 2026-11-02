@@ -280,3 +280,15 @@ script. When a deliberate bridge change alters the stream,
 the recording (`bridge→runtime.current.ndjson`); the recording itself is
 never rewritten. See
 `examples/plugins/echo-provider/provider-bridge.parity.test.ts`.
+
+### Credential proxy readiness
+
+`experimental_contributeEnvHealth` receives the server-selected `hostId` and
+`projectId` (null when no project is selected; omitted by older servers). Return
+`{ status: "ready" | "unavailable" | "unknown", label, statusMessage }` to report
+cached routing/account eligibility for that scope. Omitted status is legacy ready.
+A negative result suppresses local account identity/login suggestions and is
+shown as system `unknown` with its reason. It cannot override a missing CLI, an
+unsupported version, or unknown host health. Return null only when the plugin
+does not manage this provider. Checks must not submit model requests or refresh
+credentials. Core uses this path for the picker and `bb provider states`.

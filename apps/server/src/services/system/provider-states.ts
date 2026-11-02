@@ -13,6 +13,7 @@ import {
 import {
   requireConnectedHostSession,
   requireEnvironment,
+  requireProject,
 } from "../lib/entity-lookup.js";
 import { listSystemProviderInfos } from "./execution-options.js";
 import { resolveSystemLookupHostId } from "./host-lookup.js";
@@ -43,7 +44,12 @@ function unknownProviderState(
 
 async function getProviderState(
   deps: AppDeps,
-  args: { cwd?: string; hostId: string; provider: ProviderInfo },
+  args: {
+    cwd?: string;
+    hostId: string;
+    projectId: string | null;
+    provider: ProviderInfo;
+  },
 ): Promise<SystemProviderState> {
   if (!args.provider.maintenance.health) {
     return unknownProviderState(
@@ -82,17 +88,25 @@ async function getProviderState(
       ...result.health,
       localLoginCommand: result.health.localLoginCommand ?? null,
     };
-    if (health.status !== "unauthenticated" && health.status !== "expired") {
+    if (
+      health.status !== "ready" &&
+      health.status !== "unauthenticated" &&
+      health.status !== "expired"
+    ) {
       return health;
     }
     const contributed = await resolvePluginProviderEnvHealth({
       providerId: args.provider.id,
       hostId: args.hostId,
+      projectId: args.projectId,
     });
     if (contributed === null) return health;
     return {
       ...health,
-      status: "ready",
+      status:
+        contributed.status === "unavailable"
+          ? "unknown"
+          : (contributed.status ?? "ready"),
       statusMessage: contributed.statusMessage,
       accountEmail: null,
       planLabel: contributed.label,
@@ -112,10 +126,16 @@ export async function getProviderStates(
   query: SystemProvidersQuery,
 ): Promise<SystemProviderStatesResponse> {
   const hostId = resolveSystemLookupHostId(deps, query);
-  const cwd =
+  const environment =
     query.environmentId === undefined
-      ? undefined
-      : (requireEnvironment(deps.db, query.environmentId).path ?? undefined);
+      ? null
+      : requireEnvironment(deps.db, query.environmentId);
+  const projectId =
+    environment?.projectId ??
+    (query.projectId === undefined
+      ? null
+      : requireProject(deps.db, query.projectId).id);
+  const cwd = environment?.path ?? undefined;
   const providers = await listSystemProviderInfos(deps, { hostId });
   try {
     requireConnectedHostSession(deps, hostId);
@@ -136,6 +156,7 @@ export async function getProviderStates(
     providers: await mapProviderMaintenanceRequests(providers, (provider) =>
       getProviderState(deps, {
         hostId,
+        projectId,
         provider,
         ...(cwd === undefined ? {} : { cwd }),
       }),
