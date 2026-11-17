@@ -23,3 +23,20 @@ Existing memory data, grants, indexes, schedules and provider/model selection ar
 ## Private fork delivery
 
 The additive API carries SDK version `0.6.133-memory.1657.0`, a private prerelease above the installed `0.6.132`; no npm SDK release is published. Existing CI checks run unchanged on GitHub-hosted runners in forks because the upstream Blacksmith runner labels are not available there. Upstream runner selection remains unchanged.
+
+## Review correction and fork verification
+
+The dispatch hook sees the original message before agent attribution, resolved
+mentions and deferred startup context are appended. Preserve that input separately
+through internal command builders and the backwards-compatible provisioning JSON;
+providers still receive the fully augmented command input. The extra internal
+field never crosses the host wire. Cold/warm mention dispatch and grouped commands
+have a regression that failed on the reviewed predecessor.
+
+The fork has no upstream provider credential: the authenticated provider-model
+probe runs only in upstream, while ordinary tests remain enabled. Standard fork
+Windows runners use two Vitest workers and one concurrent Turbo task; upstream
+runner parallelism is unchanged. Git fixtures advance the bare remote directly,
+so preparing a remote change cannot update client tracking refs before the test.
+The initial fork failures remain recorded; corrected checks must pass before
+source acceptance or production installation.

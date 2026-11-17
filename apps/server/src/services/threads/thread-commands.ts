@@ -81,6 +81,7 @@ export interface ThreadStartCommandArgs {
   fork: ThreadForkDescriptor | null;
   permissionEscalation: PermissionEscalation;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   projectId: string;
   providerId: string;
@@ -115,6 +116,7 @@ interface PrepareTurnSubmitCommandPayloadArgs {
   execution: ResolvedThreadExecutionOptions;
   permissionEscalation: PermissionEscalation;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   providerThreadId?: string;
   target: TurnSubmitTarget;
@@ -318,6 +320,9 @@ export async function buildThreadStartCommand(
     threadId: args.thread.id,
     projectId: args.projectId,
     input: args.input,
+    ...(args.dispatchInput === undefined
+      ? {}
+      : { dispatchInput: args.dispatchInput }),
     ...(args.inputGroups === undefined
       ? {}
       : { inputGroups: args.inputGroups }),
@@ -422,6 +427,9 @@ export async function prepareTurnSubmitCommandPayload(
     threadId: args.thread.id,
     projectId: args.thread.projectId,
     input: args.input,
+    ...(args.dispatchInput === undefined
+      ? {}
+      : { dispatchInput: args.dispatchInput }),
     ...(args.inputGroups === undefined
       ? {}
       : { inputGroups: args.inputGroups }),

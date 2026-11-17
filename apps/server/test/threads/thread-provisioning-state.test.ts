@@ -39,48 +39,68 @@ function setup() {
 }
 
 describe("thread provisioning state", () => {
-  it("stores provisioning progress in the durable thread startup context", () => {
-    const { db, host, hub, thread } = setup();
-    const input = textInput("start this workspace");
+  it.each([false, true])(
+    "stores provisioning progress and original dispatch input (enriched: %s)",
+    (enriched) => {
+      const { db, host, hub, thread } = setup();
+      const input = textInput("start this workspace");
 
-    const context = requestThreadProvision(
-      { db, hub },
-      {
-        originPluginId: null,
-        author: { initiator: "user", senderThreadId: null },
-        thread,
-        environmentIntent: {
-          type: "provider",
-          environmentProviderId: "project-checkout",
-          machine: { type: "existing", hostId: host.id },
-          inputs: {},
-          selectionResolved: true,
+      const context = requestThreadProvision(
+        { db, hub },
+        {
+          originPluginId: null,
+          author: { initiator: "user", senderThreadId: null },
+          thread,
+          environmentIntent: {
+            type: "provider",
+            environmentProviderId: "project-checkout",
+            machine: { type: "existing", hostId: host.id },
+            inputs: {},
+            selectionResolved: true,
+          },
+          input,
+          ...(enriched
+            ? {
+                dispatchInput: input,
+                providerInput: [
+                  ...input,
+                  ...textInput("provider-only startup context"),
+                ],
+              }
+            : {}),
+          execution: {
+            model: "gpt-5",
+            serviceTier: "default",
+            reasoningLevel: "medium",
+            permissionMode: "full",
+            source: "client/turn/requested",
+          },
+          fork: null,
+          startedOnBehalfOf: null,
+          titleProvided: true,
         },
+      );
+
+      expect(context.request.input).toEqual(
+        enriched
+          ? [...input, ...textInput("provider-only startup context")]
+          : input,
+      );
+      expect(context.request.dispatchInput).toEqual(
+        enriched ? input : undefined,
+      );
+      expect(context.state.provisioningId).toMatch(/^tpv_/);
+      expect(context.state.environmentId).toBeNull();
+      expect(context.state.environmentId).toBeNull();
+      expect(context.state.provisionEventSequence).toBeNull();
+      expect(context.state.workspaceReadyEventSequence).toBeNull();
+      expect(getThreadProvisionContext(db, thread.id)).toEqual(context);
+      assertPromptHistoryForTurnRequest({
+        db,
+        threadId: thread.id,
+        scope: "project",
         input,
-        execution: {
-          model: "gpt-5",
-          serviceTier: "default",
-          reasoningLevel: "medium",
-          permissionMode: "full",
-          source: "client/turn/requested",
-        },
-        fork: null,
-        startedOnBehalfOf: null,
-        titleProvided: true,
-      },
-    );
-
-    expect(context.state.provisioningId).toMatch(/^tpv_/);
-    expect(context.state.environmentId).toBeNull();
-    expect(context.state.environmentId).toBeNull();
-    expect(context.state.provisionEventSequence).toBeNull();
-    expect(context.state.workspaceReadyEventSequence).toBeNull();
-    expect(getThreadProvisionContext(db, thread.id)).toEqual(context);
-    assertPromptHistoryForTurnRequest({
-      db,
-      threadId: thread.id,
-      scope: "project",
-      input,
-    });
-  });
+      });
+    },
+  );
 });

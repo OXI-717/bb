@@ -342,6 +342,69 @@ describe("plugin mention providers (bb.ui.registerMentionProvider)", () => {
     expect(foreign.status).toBe(403);
   });
 
+  it.each([false, true])(
+    "passes the original dispatch input to context providers with resolved mentions (warm: %s)",
+    async (warm) => {
+      const raw = "@Fix login bug";
+      const rootDir = await writePlugin(
+        join(harness.config.dataDir, "fixtures"),
+        {
+          name: "bb-plugin-dispatch-context",
+          serverSource: `export default function plugin(bb) {
+        bb.agents.experimental_contributeTurnContext(ctx => ctx.input.text === ${JSON.stringify(raw)} ? "matched original dispatch" : null);
+      }`,
+        },
+      );
+      await harness.pluginService.installPath(rootDir);
+      const { environment, thread } = warm
+        ? seedWarmIdleThreadFixture(harness, 71)
+        : seedColdIdleThreadFixture(harness, 72);
+      await sendThreadMessage(harness.deps, {
+        originPluginId: null,
+        environment,
+        thread,
+        trigger: "user",
+        payload: {
+          input: pluginMentionInput({
+            text: raw,
+            mentions: [{ label: "Fix login bug", itemId: "issues:ISS-42" }],
+          }),
+          mode: "start",
+          model: "gpt-5",
+          permissionMode: "full",
+          reasoningLevel: "medium",
+          serviceTier: "default",
+        },
+      });
+      const queued = await waitForQueuedCommand(
+        harness,
+        (candidate) =>
+          (candidate.command.type === "thread.start" ||
+            candidate.command.type === "turn.submit") &&
+          candidate.command.threadId === thread.id,
+      );
+      if (
+        queued.command.type !== "thread.start" &&
+        queued.command.type !== "turn.submit"
+      )
+        throw new Error("Expected a turn command");
+      expect(queued.command.input).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "text",
+            visibility: "agent-only",
+            text: expect.stringContaining("matched original dispatch"),
+          }),
+          expect.objectContaining({
+            type: "text",
+            visibility: "agent-only",
+            text: expect.stringContaining("Issue ISS-42 details"),
+          }),
+        ]),
+      );
+    },
+  );
+
   it("resolves each unique mention once at send and attaches agent-only context inputs", async () => {
     const { environment, thread } = seedColdIdleThreadFixture(harness, 1);
 

@@ -462,9 +462,7 @@ async function runDispatchAttempt(
     deliveryMode: run.deliveryMode,
   };
 
-  const retriesGoFirst = getExperiments(
-    deps.db,
-  ).resumeThreadsAfterRestart;
+  const retriesGoFirst = getExperiments(deps.db).resumeThreadsAfterRestart;
   const waitOn = (
     waitingOn: QueuedMessageWaitingOn,
     sendAt: number | null,
@@ -633,6 +631,7 @@ async function runDispatchAttempt(
         author,
         claimed,
         originPluginId: args.originPluginId,
+        dispatchInput: payload.input,
         payload:
           senderThreadId === null
             ? resolvedPayload
@@ -730,13 +729,7 @@ async function runDispatchAttempt(
       // for a thread that is gone. Reporting a dispatch here would tell the
       // caller their message went when it went nowhere.
       const current = getThread(deps.db, thread.id);
-      return reattemptDispatchForThreadChange(
-        deps,
-        args,
-        current,
-        run,
-        waitOn,
-      );
+      return reattemptDispatchForThreadChange(deps, args, current, run, waitOn);
     }
     await launchAdmittedThread(deps, admission);
     return { kind: "dispatched" };
@@ -848,6 +841,7 @@ function consumeClaimedRows(
 }
 
 interface AdmitPendingThreadArgs {
+  dispatchInput: PromptInput[];
   author: DispatchAuthor;
   claimed: ClaimedQueuedThreadMessageRow[] | null;
   originPluginId: string | null;
@@ -942,6 +936,7 @@ async function admitPendingThread(
           execution,
           fork: startContext.fork,
           input: args.payload.input,
+          dispatchInput: args.dispatchInput,
           originPluginId: args.originPluginId,
           ...(startContext.providerInput === undefined
             ? {}

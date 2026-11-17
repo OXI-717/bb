@@ -33,6 +33,7 @@ interface DispatchTurnDuringReprovisionArgs {
   execution: ResolvedThreadExecutionOptions;
   initiator: ThreadTurnInitiator;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   originPluginId: string | null;
   retryOf?: TurnRequestRetryMarker;
@@ -87,6 +88,9 @@ export async function dispatchTurnDuringReprovision(
       execution: args.execution,
       initiator: args.initiator,
       input: args.input,
+      ...(args.dispatchInput === undefined
+        ? {}
+        : { dispatchInput: args.dispatchInput }),
       inputGroups: args.inputGroups,
       originPluginId: args.originPluginId,
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),

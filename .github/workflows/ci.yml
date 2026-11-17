@@ -10,6 +10,7 @@ on:
 env:
   PRIMARY_NODE_VERSION: "22.x"
   PNPM_VERSION: "9.15.0"
+  VITEST_MAX_WORKERS: ${{ github.repository != 'get-bb/bb' && '2' || '' }}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
@@ -447,13 +448,13 @@ jobs:
       - name: Test on Windows
         shell: cmd
         env:
-          VITEST_MAX_WORKERS: ${{ startsWith(matrix.shard, 'app-') && '8' || '' }}
+          VITEST_MAX_WORKERS: ${{ github.repository != 'get-bb/bb' && '2' || (startsWith(matrix.shard, 'app-') && '8' || '') }}
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           BB_CI_TEST_SHARD: ${{ matrix.vitestShard }}
         run: |
           if not defined TURBO_CACHE_DIR set TURBO_CACHE_DIR=.turbo/cache
-          pnpm exec turbo run test ${{ matrix.filter }} --cache-dir="%TURBO_CACHE_DIR%" --continue --output-logs=new-only --summarize --concurrency=${{ matrix.concurrency }}
+          pnpm exec turbo run test ${{ matrix.filter }} --cache-dir="%TURBO_CACHE_DIR%" --continue --output-logs=new-only --summarize --concurrency=${{ github.repository == 'get-bb/bb' && matrix.concurrency || 1 }}
 
       - name: Upload test timings
         if: ${{ !cancelled() }}
@@ -828,7 +829,7 @@ jobs:
 
     # Fork pull requests cannot read secrets, so the probe would fail
     # unauthenticated for reasons unrelated to bb.
-    if: ${{ fromJSON(needs.plan.outputs.selection).providers && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    if: ${{ github.repository == 'get-bb/bb' && fromJSON(needs.plan.outputs.selection).providers && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
 
     steps:
       - name: Checkout repository

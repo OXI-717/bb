@@ -45,6 +45,7 @@ export const threadProvisionCommonPayloadSchema = z.object({
   execution: resolvedThreadExecutionOptionsSchema.nullable(),
   fork: threadForkDescriptorSchema.nullable().default(null),
   input: z.array(promptInputSchema),
+  dispatchInput: z.array(promptInputSchema).optional(),
   inputGroups: z.array(z.array(promptInputSchema).min(1)).min(1).optional(),
   titleProvided: z.boolean(),
   seedWithoutRun: z.boolean().default(false),

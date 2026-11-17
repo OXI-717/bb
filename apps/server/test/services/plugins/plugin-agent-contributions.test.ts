@@ -251,7 +251,8 @@ describe("plugin agent contributions reach thread runtime config", () => {
       execution,
       fork: null,
       permissionEscalation: "ask",
-      input: firstInput,
+      input: [...firstInput, ...textInput("resolved first-turn context")],
+      dispatchInput: firstInput,
       projectId: project.id,
       providerId: "codex",
       requestId: encodeClientTurnRequestIdNumber({ value: 81 }),
@@ -263,17 +264,24 @@ describe("plugin agent contributions reach thread runtime config", () => {
       visibility: "agent-only",
       text: expect.stringContaining("owner-source"),
     });
+    expect(first.input[0]).not.toMatchObject({
+      text: expect.stringContaining("resolved first-turn context"),
+    });
+    expect(first.input.at(-1)).toEqual(
+      textInput("resolved first-turn context")[0],
+    );
     expect(JSON.stringify(firstInput)).toBe(firstBefore);
     expect(first.instructions).toContain("standing policy");
     expect(first.instructions).not.toContain("owner-source");
     const secondInput = textInput("second question");
-    const groups = [secondInput];
+    const groups = [secondInput, textInput("resolved later-turn context")];
     const groupsBefore = JSON.stringify(groups);
     const second = await prepareTurnSubmitCommandPayload(harness.deps, {
       environment,
       execution,
       permissionEscalation: "ask",
-      input: secondInput,
+      input: groups.flat(),
+      dispatchInput: secondInput,
       inputGroups: groups,
       providerThreadId: "same-provider-session",
       target: { mode: "start" },
@@ -292,7 +300,10 @@ describe("plugin agent contributions reach thread runtime config", () => {
     );
     expect(second.resumeContext.instructions).toBe(first.instructions);
     expect(JSON.stringify(groups)).toBe(groupsBefore);
-    expect(second.input.at(-1)).toEqual(secondInput[0]);
+    expect(second.input.at(-1)).toEqual(groups[1][0]);
+    expect(second.input[0]).not.toMatchObject({
+      text: expect.stringContaining("resolved later-turn context"),
+    });
     await harness.pluginService.setEnabled("turn-context", false);
     const thirdInput = textInput("after disable");
     const third = await prepareTurnSubmitCommandPayload(harness.deps, {

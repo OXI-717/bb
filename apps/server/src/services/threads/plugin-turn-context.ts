@@ -11,13 +11,15 @@ export function withPluginTurnContext(args: {
   threadId: string;
   projectId: string;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   logger: Pick<ServerLogger, "warn">;
   contributions?: readonly TurnContextProvider[];
 }): { input: PromptInput[]; inputGroups?: PromptInput[][] } {
   const contributions =
     args.contributions ?? listPluginTurnContextContributions();
-  const text = args.input
+  const dispatchInput = args.dispatchInput ?? args.input;
+  const text = dispatchInput
     .filter((block) => block.type === "text")
     .map((block) => block.text)
     .join("\n");
@@ -29,7 +31,7 @@ export function withPluginTurnContext(args: {
       value = contribution.provider({
         threadId: args.threadId,
         projectId: args.projectId,
-        input: { blocks: structuredClone(args.input), text },
+        input: { blocks: structuredClone(dispatchInput), text },
       });
     } catch {
       args.logger.warn(
