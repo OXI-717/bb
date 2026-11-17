@@ -908,7 +908,7 @@ jobs:
         include:
           - os: ${{ github.repository == 'get-bb/bb' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
             node-version: "22.x"
-          - os: ${{ github.repository == 'get-bb/bb' && 'blacksmith-6vcpu-macos-15' || 'macos-15' }}
+          - os: ${{ github.repository == 'get-bb/bb' && 'blacksmith-6vcpu-macos-15' || 'macos-15-intel' }}
             node-version: "22.x"
 
     steps:
