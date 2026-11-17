@@ -19,6 +19,7 @@ import {
 import {
   buildExecutionOptions,
   buildThreadStartCommand,
+  prepareTurnSubmitCommandPayload,
 } from "../../../src/services/threads/thread-commands.js";
 import { textInput } from "../../helpers/prompt-input.js";
 import {
@@ -210,6 +211,100 @@ describe("plugin agent contributions reach thread runtime config", () => {
   beforeEach(async () => {
     harness = await createTestAppHarness();
     pluginsDir = await mkdtemp(join(tmpdir(), "bb-plugin-runtime-test-"));
+  });
+
+  it("delivers fresh untrusted plugin context on first and later grouped turns without replacing instructions", async () => {
+    const rootDir = await writePlugin(pluginsDir, {
+      name: "bb-plugin-turn-context",
+      serverSource: `
+        export default function plugin(bb) {
+          bb.agents.contributeInstructions(() => "standing policy");
+          bb.agents.experimental_contributeTurnContext?.(ctx =>
+            JSON.stringify({ project: ctx.projectId, query: ctx.input.text, source: "owner-source" }));
+        }
+      `,
+    });
+    await harness.pluginService.installPath(rootDir);
+    const { host } = seedHostSession(harness.deps, { id: "host-turn-context" });
+    const { project } = seedProjectWithSource(harness.deps, {
+      hostId: host.id,
+    });
+    const environment = seedEnvironment(harness.deps, {
+      hostId: host.id,
+      projectId: project.id,
+      path: join(harness.config.dataDir, "turn-context-workspace"),
+    });
+    const thread = seedThread(harness.deps, {
+      projectId: project.id,
+      environmentId: environment.id,
+      providerId: "codex",
+    });
+    const execution = await buildExecutionOptions(
+      harness.deps,
+      { model: "gpt-5" },
+      { threadId: thread.id },
+    );
+    const firstInput = textInput("first question");
+    const firstBefore = JSON.stringify(firstInput);
+    const first = await buildThreadStartCommand(harness.deps, {
+      environment,
+      execution,
+      fork: null,
+      permissionEscalation: "ask",
+      input: firstInput,
+      projectId: project.id,
+      providerId: "codex",
+      requestId: encodeClientTurnRequestIdNumber({ value: 81 }),
+      syncGeneratedTitle: false,
+      thread,
+    });
+    expect(first.input[0]).toMatchObject({
+      type: "text",
+      visibility: "agent-only",
+      text: expect.stringContaining("owner-source"),
+    });
+    expect(JSON.stringify(firstInput)).toBe(firstBefore);
+    expect(first.instructions).toContain("standing policy");
+    expect(first.instructions).not.toContain("owner-source");
+    const secondInput = textInput("second question");
+    const groups = [secondInput];
+    const groupsBefore = JSON.stringify(groups);
+    const second = await prepareTurnSubmitCommandPayload(harness.deps, {
+      environment,
+      execution,
+      permissionEscalation: "ask",
+      input: secondInput,
+      inputGroups: groups,
+      providerThreadId: "same-provider-session",
+      target: { mode: "start" },
+      thread,
+    });
+    expect(second.input[0]).toMatchObject({
+      type: "text",
+      visibility: "agent-only",
+      text: expect.stringContaining("second question"),
+    });
+    expect(JSON.stringify(second.inputGroups?.[0])).toContain(
+      "second question",
+    );
+    expect(JSON.stringify(second.inputGroups?.[0])).not.toContain(
+      "first question",
+    );
+    expect(second.resumeContext.instructions).toBe(first.instructions);
+    expect(JSON.stringify(groups)).toBe(groupsBefore);
+    expect(second.input.at(-1)).toEqual(secondInput[0]);
+    await harness.pluginService.setEnabled("turn-context", false);
+    const thirdInput = textInput("after disable");
+    const third = await prepareTurnSubmitCommandPayload(harness.deps, {
+      environment,
+      execution,
+      permissionEscalation: "ask",
+      input: thirdInput,
+      providerThreadId: "same-provider-session",
+      target: { mode: "start" },
+      thread,
+    });
+    expect(third.input).toEqual(thirdInput);
   });
 
   it("isolates resolver failures and timeouts", async () => {

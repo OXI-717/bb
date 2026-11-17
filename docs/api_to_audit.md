@@ -4454,3 +4454,11 @@ precedence, bounded discovery failure, and module-ABI preservation after Node
 replacement. Settle the shared process-local instance lifecycle across SDK
 bundle versions and whether `bundledNpmCli` belongs on the public surface before
 removing the prefix.
+
+## experimental_contributeTurnContext — fresh plugin reference data
+
+`bb.agents.experimental_contributeTurnContext` registers one synchronous callback per plugin factory. It receives exact thread/project identity and a private copy of original command input. It supplies bounded untrusted reference data, not standing instructions. Both core `buildThreadStartCommand` and `prepareTurnSubmitCommandPayload` call the same `withPluginTurnContext` helper; inline, queued, retry and steer paths therefore keep the shared command boundary. No new message, model invocation or provider-session restart is introduced.
+
+Existing agent-only `PromptInput` groups carry the data to every provider through unchanged daemon attachment staging and flattening. No wire field changes. Original request records and user input arrays stay unchanged. Reload/disable removes registrations through the current loaded-plugin registry. Null omits data. Throws, asynchronous or malformed output and per-plugin16384/global32768-character overflow omit that contribution with metadata-only diagnostics; data is not silently clipped. Delimiters in the JSON data are escaped.
+
+Before stabilization: verify first/second grouped-turn delivery against a real provider session, rejection/error/lifecycle behavior, attachment and queued-message paths, no attribution of plugin context as human-authored evidence, unchanged standing-policy boundaries and prior daemon compatibility. The core command-building regression and focused helper tests cover the shared path; the SDK fake host mirrors registration.

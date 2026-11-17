@@ -1522,7 +1522,7 @@ describe("agent tools", () => {
   });
 
   it("rejects duplicate keyed registrations like the production host", () => {
-    const { bb } = createFakePluginHost();
+    const { bb, harness } = createFakePluginHost();
     const tool = {
       name: "lookup_doc",
       description: "Look up a doc",
@@ -1533,6 +1533,17 @@ describe("agent tools", () => {
     expect(() => bb.agents.registerTool(tool)).toThrow(
       'tool "lookup_doc" is already registered',
     );
+    bb.agents.experimental_contributeTurnContext((ctx) => ctx.input.text);
+    expect(() =>
+      bb.agents.experimental_contributeTurnContext(() => "duplicate"),
+    ).toThrow("turn context is already registered");
+    expect(
+      harness.registrations.turnContextProvider?.({
+        threadId: "thr",
+        projectId: "proj",
+        input: { blocks: [], text: "fresh query" },
+      }),
+    ).toBe("fresh query");
     bb.agents.contributeInstructions(() => "first");
     expect(() => bb.agents.contributeInstructions(() => "second")).toThrow(
       "agent instructions are already registered",

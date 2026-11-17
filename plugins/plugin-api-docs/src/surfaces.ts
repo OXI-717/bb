@@ -1063,8 +1063,10 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Give agents native tools that work like bb's built-in ones",
           "Choose per thread which tools and skills are available",
           "Add instructions to the system prompt when a session starts",
+          "Supply bounded untrusted reference data freshly on first and follow-up turns",
         ],
         apiSymbols: [
+          "PluginAgents.experimental_contributeTurnContext",
           "PluginAgents",
           "PluginAgentToolContext",
           "PluginRowPresentation",

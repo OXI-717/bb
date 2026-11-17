@@ -1684,6 +1684,26 @@ export interface PluginProviderDeclaration {
 
 export interface PluginAgents {
   /**
+   * Contribute fresh reference data to each first or follow-up provider command,
+   * including steers, without changing standing session instructions or saved
+   * user requests. Core wraps it as untrusted, agent-only text in the command's
+   * existing input groups. It does not create a message, turn or model call.
+   * The synchronous callback receives a private copy of the original input.
+   * Return null to omit data; never perform I/O here. Prepare bounded data in
+   * a dispatch hook and match the exact thread/project/input before returning it.
+   * One registration per factory; reload/disable removes the old callback.
+   * Throws, non-string/async output and output over 16384 characters are omitted
+   * with metadata-only diagnostics. All rendered contributions share a 32768
+   * character budget. No contribution changes tools, skills or access policy.
+   */
+  experimental_contributeTurnContext(
+    provider: (ctx: {
+      threadId: string;
+      projectId: string;
+      input: PluginDispatchInput;
+    }) => string | null,
+  ): void;
+  /**
    * Select this plugin's statically registered tools and manifest skills for
    * each thread/session resolution, with optional dynamic instructions. The
    * callback is synchronous and runs at `thread.start` / `turn.submit`; it
