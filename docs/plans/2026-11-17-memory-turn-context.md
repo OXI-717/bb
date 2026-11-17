@@ -19,3 +19,7 @@ The memory consumer uses its existing bounded lookup and authenticated project m
 5. Deliver through the supported installation route only. One meaningful same-session first/second-turn live check with the original owner query and source/date/order evidence. A unit fixture or manual search does not establish live injection.
 
 Existing memory data, grants, indexes, schedules and provider/model selection are outside this change.
+
+## Private fork delivery
+
+The additive API carries SDK version `0.6.133-memory.1657.0`, a private prerelease above the installed `0.6.132`; no npm SDK release is published. Existing CI checks run unchanged on GitHub-hosted runners in forks because the upstream Blacksmith runner labels are not available there. Upstream runner selection remains unchanged.
