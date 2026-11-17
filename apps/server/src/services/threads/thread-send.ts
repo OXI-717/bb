@@ -637,6 +637,7 @@ async function sendThreadMessageWithoutContextClear(
       execution,
       initiator,
       input,
+      dispatchInput: payload.input,
       inputGroups,
       originPluginId: args.originPluginId,
       ...(args.retryOf !== undefined ? { retryOf: args.retryOf } : {}),
@@ -685,6 +686,7 @@ async function sendThreadMessageWithoutContextClear(
     const commandArgs = {
       thread,
       input,
+      dispatchInput: payload.input,
       ...(inputGroups !== undefined ? { inputGroups } : {}),
       requestId,
       execution,
@@ -795,6 +797,7 @@ async function sendThreadMessageWithoutContextClear(
   const preparedCommand = await prepareTurnSubmitCommandPayload(deps, {
     thread,
     input,
+    dispatchInput: payload.input,
     ...(inputGroups !== undefined ? { inputGroups } : {}),
     execution,
     permissionEscalation,

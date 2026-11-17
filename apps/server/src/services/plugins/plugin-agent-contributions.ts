@@ -25,6 +25,7 @@ type PluginAgentContributions = Pick<
   Partial<
     Pick<
       PluginService,
+      | "listTurnContextContributions"
       | "resolveAgentConfiguration"
       | "resolveProviderEnv"
       | "resolveProviderEnvHealth"
@@ -60,6 +61,10 @@ export async function resolvePluginAgentConfiguration(args: {
     };
   }
   return active.resolveAgentConfiguration(args);
+}
+
+export function listPluginTurnContextContributions() {
+  return contributions?.listTurnContextContributions?.() ?? [];
 }
 
 export function listPluginInstructionContributions(): Array<{

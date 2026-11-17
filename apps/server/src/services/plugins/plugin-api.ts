@@ -298,6 +298,7 @@ export interface PluginApiHandle {
   >;
   agentConfigurationProvider: PluginAgentConfigurationProvider | null;
   instructionProvider: PluginInstructionProvider | null;
+  turnContextProvider: PluginTurnContextProvider | null;
   mentionProviders: PluginMentionProviderRecord[];
   activate(): void;
   closeWebSockets(): void;
@@ -316,6 +317,10 @@ interface PluginHostSignalHandler {
     payload: unknown;
   }) => void | Promise<void>;
 }
+
+type PluginTurnContextProvider = Parameters<
+  PluginAgents["experimental_contributeTurnContext"]
+>[0];
 
 type PluginInstructionProvider = (ctx: {
   threadId: string;
@@ -966,8 +971,19 @@ export function createPluginApi(options: {
   let agentConfigurationProvider: PluginAgentConfigurationProvider | null =
     null;
   let instructionProvider: PluginInstructionProvider | null = null;
+  let turnContextProvider: PluginTurnContextProvider | null = null;
 
   const agents: PluginAgents = {
+    experimental_contributeTurnContext(provider) {
+      assertLive();
+      if (turnContextProvider !== null)
+        throw new Error("turn context is already registered");
+      if (typeof provider !== "function")
+        throw new Error(
+          "turn context requires a synchronous provider function",
+        );
+      turnContextProvider = provider;
+    },
     configure(provider) {
       assertLive();
       if (agentConfigurationProvider !== null) {
@@ -1508,6 +1524,9 @@ export function createPluginApi(options: {
     },
     get instructionProvider() {
       return instructionProvider;
+    },
+    get turnContextProvider() {
+      return turnContextProvider;
     },
     mentionProviders,
     activate() {

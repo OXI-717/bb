@@ -48,6 +48,7 @@ import { clampPermissionModeToHost } from "../hosts/permission-ceiling.js";
 import type { ProviderRegistryService } from "../providers/provider-registry.js";
 import { resolveProviderPlanCommand } from "../providers/provider-plan-command.js";
 import { workspaceContextFromPath } from "../environments/workspace-command-target.js";
+import { withPluginTurnContext } from "./plugin-turn-context.js";
 import { projectCheckoutPathOnHost } from "../projects/project-workspace.js";
 import {
   requireBridgeLaunchForProviderId,
@@ -80,6 +81,7 @@ export interface ThreadStartCommandArgs {
   fork: ThreadForkDescriptor | null;
   permissionEscalation: PermissionEscalation;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   projectId: string;
   providerId: string;
@@ -114,6 +116,7 @@ interface PrepareTurnSubmitCommandPayloadArgs {
   execution: ResolvedThreadExecutionOptions;
   permissionEscalation: PermissionEscalation;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   providerThreadId?: string;
   target: TurnSubmitTarget;
@@ -230,18 +233,19 @@ function toRuntimeExecutionOptions(
     args.projectId,
     args.hostId,
   );
-  const model = args.deps.lifecycleDedupers.providerModelCatalogs.getCachedModel(
-    args.deps,
-    {
-      hostId: args.hostId,
-      providerId: args.providerId,
-      workspacePaths:
-        checkoutPath === undefined
-          ? [args.workspacePath]
-          : [args.workspacePath, checkoutPath],
-      model: args.execution.model,
-    },
-  );
+  const model =
+    args.deps.lifecycleDedupers.providerModelCatalogs.getCachedModel(
+      args.deps,
+      {
+        hostId: args.hostId,
+        providerId: args.providerId,
+        workspacePaths:
+          checkoutPath === undefined
+            ? [args.workspacePath]
+            : [args.workspacePath, checkoutPath],
+        model: args.execution.model,
+      },
+    );
   const reasoningLevel =
     model === null ||
     model.supportedReasoningEfforts.some(
@@ -312,6 +316,18 @@ export async function buildThreadStartCommand(
     model: args.execution.model,
   });
   const bridgeLaunch = requireBridgeLaunchForProviderId(deps, args.providerId);
+  const providerInput = withPluginTurnContext({
+    threadId: args.thread.id,
+    projectId: args.projectId,
+    input: args.input,
+    ...(args.dispatchInput === undefined
+      ? {}
+      : { dispatchInput: args.dispatchInput }),
+    ...(args.inputGroups === undefined
+      ? {}
+      : { inputGroups: args.inputGroups }),
+    logger: deps.logger,
+  });
   return {
     type: "thread.start",
     environmentId: args.environment.id,
@@ -323,10 +339,7 @@ export async function buildThreadStartCommand(
     providerId: args.providerId,
     bridgeLaunch,
     requestId: args.requestId,
-    input: args.input,
-    ...(args.inputGroups !== undefined
-      ? { inputGroups: args.inputGroups }
-      : {}),
+    ...providerInput,
     options: toRuntimeExecutionOptions({
       ...args,
       deps,
@@ -410,16 +423,25 @@ export async function prepareTurnSubmitCommandPayload(
     environment: args.environment,
     model: args.execution.model,
   });
+  const providerInput = withPluginTurnContext({
+    threadId: args.thread.id,
+    projectId: args.thread.projectId,
+    input: args.input,
+    ...(args.dispatchInput === undefined
+      ? {}
+      : { dispatchInput: args.dispatchInput }),
+    ...(args.inputGroups === undefined
+      ? {}
+      : { inputGroups: args.inputGroups }),
+    logger: deps.logger,
+  });
   return buildPreparedTurnSubmitCommandPayload({
     deps,
     environmentId: args.environment.id,
     hostId: args.environment.hostId,
     execution: args.execution,
     permissionEscalation: args.permissionEscalation,
-    input: args.input,
-    ...(args.inputGroups !== undefined
-      ? { inputGroups: args.inputGroups }
-      : {}),
+    ...providerInput,
     providerThreadId,
     runtimeContext,
     target: args.target,
@@ -449,12 +471,7 @@ function threadHasLiveChildren(
   const row = deps.db
     .select({ id: threads.id })
     .from(threads)
-    .where(
-      and(
-        eq(threads.parentThreadId, threadId),
-        liveThread,
-      ),
-    )
+    .where(and(eq(threads.parentThreadId, threadId), liveThread))
     .limit(1)
     .get();
   return row !== undefined;

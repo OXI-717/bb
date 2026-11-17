@@ -62,6 +62,7 @@ interface RequestThreadProvisionArgs {
   execution: ResolvedThreadExecutionOptions;
   fork: ThreadForkDescriptor | null;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   originPluginId: string | null;
   providerInput?: PromptInput[];
   retryOf?: TurnRequestRetryMarker;
@@ -75,6 +76,7 @@ interface RequestThreadTargetReprovisionArgs {
   environment: EnvironmentRow;
   execution: ResolvedThreadExecutionOptions;
   input: PromptInput[];
+  dispatchInput?: PromptInput[];
   inputGroups?: PromptInput[][];
   initiator: ThreadTurnInitiator;
   originPluginId: string | null;
@@ -279,6 +281,9 @@ async function startThreadIfEnvironmentReady(
     },
     fork: args.context.request.fork,
     input: args.context.request.input,
+    ...(args.context.request.dispatchInput === undefined
+      ? {}
+      : { dispatchInput: args.context.request.dispatchInput }),
     ...(args.context.request.inputGroups !== undefined
       ? { inputGroups: args.context.request.inputGroups }
       : {}),
@@ -336,6 +341,9 @@ export function requestThreadProvision(
       execution: args.execution,
       fork: args.fork,
       input: args.providerInput ?? args.input,
+      ...(args.dispatchInput === undefined
+        ? {}
+        : { dispatchInput: args.dispatchInput }),
       initiator,
       seedWithoutRun: args.startedOnBehalfOf !== null,
       titleProvided: args.titleProvided,
@@ -417,6 +425,9 @@ export function requestThreadTargetReprovision(
       execution: args.execution,
       fork: null,
       input: args.input,
+      ...(args.dispatchInput === undefined
+        ? {}
+        : { dispatchInput: args.dispatchInput }),
       ...(args.inputGroups !== undefined
         ? { inputGroups: args.inputGroups }
         : {}),

@@ -189,6 +189,7 @@ import type {
   PluginAgentToolContribution,
   PluginApplyUpdateOutcome,
   PluginInstructionContribution,
+  PluginTurnContextContribution,
   PluginMentionProviderContribution,
   PluginMentionResolveResult,
   PluginMentionSearchGroup,
@@ -458,6 +459,7 @@ export interface PluginService {
     context: ExperimentalPluginProviderEnvHealthContext;
   }): Promise<PluginResolvedProviderEnvHealth | null>;
   listInstructionContributions(): PluginInstructionContribution[];
+  listTurnContextContributions(): PluginTurnContextContribution[];
   findAgentTool(
     name: string,
   ): { pluginId: string; record: PluginAgentToolRecord } | undefined;
@@ -2486,6 +2488,17 @@ export function createPluginService(deps: PluginServiceDeps): PluginService {
         if (outcome.ok && outcome.value !== null) return outcome.value;
       }
       return null;
+    },
+
+    listTurnContextContributions() {
+      const out: PluginTurnContextContribution[] = [];
+      for (const [pluginId, plugin] of [...loaded.entries()].sort(([a], [b]) =>
+        a.localeCompare(b),
+      )) {
+        const provider = plugin.handle.turnContextProvider;
+        if (provider !== null) out.push({ pluginId, provider });
+      }
+      return out;
     },
 
     listInstructionContributions() {

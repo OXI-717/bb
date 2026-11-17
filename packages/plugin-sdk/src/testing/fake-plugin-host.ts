@@ -282,6 +282,9 @@ export interface FakePluginRegistrations {
   agentConfigurationProvider:
     | ((context: PluginAgentConfigurationContext) => PluginAgentConfiguration)
     | null;
+  turnContextProvider:
+    | Parameters<PluginAgents["experimental_contributeTurnContext"]>[0]
+    | null;
   /** Provider from contributeInstructions, or null when none registered. */
   instructionProvider:
     | ((ctx: { threadId: string; projectId: string }) => string | null)
@@ -1014,6 +1017,9 @@ function createFakePluginHostInternal(
   let agentConfigurationProvider:
     | ((context: PluginAgentConfigurationContext) => PluginAgentConfiguration)
     | null = null;
+  let turnContextProvider:
+    | Parameters<PluginAgents["experimental_contributeTurnContext"]>[0]
+    | null = null;
   let instructionProvider:
     | ((ctx: { threadId: string; projectId: string }) => string | null)
     | null = null;
@@ -1090,6 +1096,16 @@ function createFakePluginHostInternal(
   };
 
   const agents: PluginAgents = {
+    experimental_contributeTurnContext(provider) {
+      assertLive();
+      if (turnContextProvider !== null)
+        throw new Error("turn context is already registered");
+      if (typeof provider !== "function")
+        throw new Error(
+          "turn context requires a synchronous provider function",
+        );
+      turnContextProvider = provider;
+    },
     configure(provider) {
       assertLive();
       if (agentConfigurationProvider !== null) {
@@ -1778,6 +1794,9 @@ function createFakePluginHostInternal(
       },
       get instructionProvider() {
         return instructionProvider;
+      },
+      get turnContextProvider() {
+        return turnContextProvider;
       },
       get threadEventHandlers() {
         return {

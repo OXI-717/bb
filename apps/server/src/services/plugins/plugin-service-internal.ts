@@ -1,3 +1,4 @@
+import type { PluginAgents } from "@get-bb/plugin-sdk";
 import type { TunnelIngressLease } from "../connect-next/tunnel-ingress.js";
 import type { EnvironmentRemoval } from "@bb/domain";
 import type { MachineEnrollmentService } from "../machines/machine-services.js";
@@ -174,6 +175,11 @@ export interface PluginAgentToolContribution {
   pluginId: string;
   tool: DynamicTool;
   instructions: string | null;
+}
+
+export interface PluginTurnContextContribution {
+  pluginId: string;
+  provider: Parameters<PluginAgents["experimental_contributeTurnContext"]>[0];
 }
 
 export interface PluginInstructionContribution {
